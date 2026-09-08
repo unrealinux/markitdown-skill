@@ -1,0 +1,23 @@
+{
+  "skill_name": "markitdown",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "请帮我把这个 PDF 文件转成 Markdown：/tmp/test.pdf",
+      "expected_output": "成功将 PDF 转换为 Markdown 格式输出",
+      "files": ["/tmp/test.pdf"]
+    },
+    {
+      "id": 2,
+      "prompt": "提取这个 Word 文档中的内容",
+      "expected_output": "成功提取 Word 文档内容并转换为 Markdown",
+      "files": ["/tmp/test.docx"]
+    },
+    {
+      "id": 3,
+      "prompt": "把这个文件夹里的所有文档都转成 Markdown",
+      "expected_output": "批量转换文件夹中的所有支持格式文件",
+      "files": []
+    }
+  ]
+}
