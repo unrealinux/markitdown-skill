@@ -2,5 +2,8 @@
 uv.lock
 __pycache__/
 *.pyc
-evals/*.json
-
+*.pyo
+.DS_Store
+*.egg-info/
+dist/
+build/
