@@ -16,6 +16,7 @@ import shutil
 
 def find_uv():
     """Find uv executable."""
+    print("🔍 Searching for uv...", file=sys.stderr)
     candidates = [
         os.path.expanduser("~/.local/bin/uv"),
         "uv",
@@ -24,30 +25,33 @@ def find_uv():
     ]
     for cmd in candidates:
         if shutil.which(cmd) or os.path.exists(cmd):
+            print(f"✅ Found uv at: {cmd}", file=sys.stderr)
             return cmd
+    print("❌ uv not found", file=sys.stderr)
     return None
 
 
 def find_python312(uv_path):
     """Find Python 3.12 via uv."""
     if uv_path:
+        print("🔍 Searching for Python 3.12...", file=sys.stderr)
         result = subprocess.run(
             [uv_path, "python", "find", "3.12"],
             capture_output=True,
             text=True
         )
         if result.returncode == 0:
-            # Extract path from output
             lines = result.stdout.strip().split('\n')
             for line in lines:
                 if 'python3.12' in line or '/python3.12' in line:
-                    # Find the actual python binary path
                     for candidate in [
                         os.path.expanduser("~/.local/bin/python3.12"),
                         os.path.expanduser("~/.local/share/uv/python/cpython-3.12-macos-x86_64-none/bin/python3.12"),
                     ]:
                         if os.path.exists(candidate):
+                            print(f"✅ Found Python 3.12 at: {candidate}", file=sys.stderr)
                             return candidate
+    print("❌ Python 3.12 not found", file=sys.stderr)
     return None
 
 
@@ -96,13 +100,17 @@ except Exception as e:
         f.write(script_content)
         temp_script = f.name
     
+    print(f"📄 Converting: {input_path}", file=sys.stderr)
+    print(f"🚀 Running conversion via uv...", file=sys.stderr)
+    
     try:
         cmd = [uv_path, "run", "--with", "markitdown", "--python", python_path, "python", temp_script]
         
+        print(f"📊 Command: {' '.join(cmd)}", file=sys.stderr)
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
-            print(f"Conversion error: {result.stderr}", file=sys.stderr)
+            print(f"❌ Conversion error: {result.stderr}", file=sys.stderr)
             return False
         
         markdown_text = result.stdout
@@ -111,7 +119,8 @@ except Exception as e:
             os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
             with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(markdown_text)
-            print(f"Saved to: {output_path}", file=sys.stderr)
+            print(f"✅ Saved to: {output_path}", file=sys.stderr)
+            print(f"📝 Output length: {len(markdown_text)} characters", file=sys.stderr)
         else:
             print(markdown_text)
         
