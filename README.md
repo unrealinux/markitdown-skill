@@ -35,7 +35,9 @@ python3 evals/make_fixtures.py && python3 evals/run_evals.py
 
 夹具中的 txt/csv/html/docx/pdf/png 与目录树由标准库生成，不需要联网；`sample.xlsx` / `sample.pptx` 通过 uv + `openpyxl` + `python-pptx` 生成（手写 OOXML 很难同时满足这两个读取器），拿不到网络时这两条评测显示为 SKIP 而不是失败。
 
-共 9 条评测，覆盖文本提取（txt/csv/html/docx/pdf/xlsx/pptx）、批量目录结构，以及「markitdown 不能 OCR」这条已知限制。
+共 11 条评测，覆盖文本提取（txt/csv/html/docx/pdf/xlsx/pptx）、批量目录结构、坏文件与好文件混在一起时的退出码与报错、`-o` 落盘，以及「markitdown 不能 OCR」这条已知限制。
+
+批量模式在**同一个解释器**里转完所有文件（`import markitdown` 本身要 5 秒）。实测：4 个文件 21.9s → 6.0s，101 个文件约 9 秒。单文件模式绕不开这 5 秒，等 6-9 秒是正常的，不要当成卡死。
 
 ## 使用
 

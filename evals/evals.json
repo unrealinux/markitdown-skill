@@ -99,6 +99,30 @@
       "min_chars": 40,
       "expect_contains": ["PPTX Fixture Title", "Second Slide", "Second slide body"],
       "expect_not_contains": []
+    },
+    {
+      "id": 10,
+      "prompt": "把 evals/fixtures/broken 目录转成 Markdown（里面有一个损坏的 docx）",
+      "expected_output": "好文件照常转换，坏文件单独报错，整体退出码为 1",
+      "files": ["evals/fixtures/broken"],
+      "mode": "dir",
+      "recursive": false,
+      "expect_exit_code": 1,
+      "expect_stderr_contains": ["ExpatError", "1 failed"],
+      "expect_files": {"good.md": "good content survives a sibling failure"},
+      "expect_absent_files": ["bad.md"],
+      "expect_stdout_empty": true
+    },
+    {
+      "id": 11,
+      "prompt": "把 evals/fixtures/sample.docx 转成 Markdown 并保存成文件",
+      "expected_output": "-o 落盘成功，stdout 保持空",
+      "files": ["evals/fixtures/sample.docx"],
+      "mode": "file",
+      "write_to_file": true,
+      "min_chars": 40,
+      "expect_contains": ["Fixture Heading", "Alpha"],
+      "expect_not_contains": []
     }
   ]
 }

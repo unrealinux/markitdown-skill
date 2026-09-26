@@ -250,6 +250,18 @@ def main():
         with open(target, "w", encoding="utf-8") as handle:
             handle.write(text)
 
+    # Failure path: one readable file next to a .docx whose XML is garbage.
+    broken = os.path.join(FIXTURES, "broken")
+    os.makedirs(broken, exist_ok=True)
+    with open(os.path.join(broken, "good.txt"), "w", encoding="utf-8") as handle:
+        handle.write("good content survives a sibling failure\n")
+    with zipfile.ZipFile(os.path.join(broken, "bad.docx"), "w") as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+        )
+        archive.writestr("word/document.xml", "<<<not xml at all")
+
     print(f"fixtures written to {FIXTURES}")
 
 

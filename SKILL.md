@@ -65,6 +65,14 @@ python3 <skill_dir>/scripts/convert.py /path/to/folder --output-dir ./output
 python3 <skill_dir>/scripts/convert.py /path/to/folder --output-dir ./markdown --recursive
 ```
 
+Batch mode converts every file inside **one** interpreter, because importing
+markitdown costs about 5 seconds on its own. Measured on this machine: 4 files
+went from 21.9s to 6.0s, and 101 files finish in ~9s. A failed file is reported on
+its own line while the rest still convert; the exit code is 1 if any file failed.
+
+Single-file mode cannot avoid that import, so expect ~6-9 seconds even for a tiny
+file. That delay is normal — do not kill the process and retry.
+
 ## Limitations
 
 - **No OCR.** markitdown has no OCR engine. A scanned PDF or an image containing
@@ -161,10 +169,13 @@ network. `sample.xlsx` and `sample.pptx` are generated through uv with
 readers exactly; if uv or the network is unavailable the two office evals are
 reported as SKIP rather than failed.
 
-Covers 9 evals: txt / csv / html / docx / pdf / xlsx / pptx text extraction; batch
-mode with nested directories (same-named files must not overwrite, hidden
-directories skipped, nothing leaked to stdout); and the no-OCR limitation for
-images, asserted as empty output so it fails loudly if that ever changes.
+Covers 11 evals: txt / csv / html / docx / pdf / xlsx / pptx text extraction;
+batch mode with nested directories (same-named files must not overwrite, hidden
+directories skipped, nothing leaked to stdout); a directory holding one corrupt
+`.docx` (the good file must still convert, the bad one must not be written, exit
+code 1, root cause in stderr); `-o` writing a file while stdout stays empty; and
+the no-OCR limitation for images, asserted as empty output so it fails loudly if
+that ever changes.
 
 ## When to Use This Skill
 

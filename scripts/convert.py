@@ -12,10 +12,12 @@ Directory mode writes one .md per input file, mirroring subdirectories.
 """
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 # markitdown pulls its format support in as optional extras: the bare package
 # cannot read .docx, .xlsx, .pptx or .pdf and raises MissingDependencyException.
@@ -41,6 +43,33 @@ CONVERT_SNIPPET = (
     "    print(f'Error: {exc}', file=sys.stderr)\n"
     "    sys.exit(1)\n"
     "sys.stdout.write(getattr(result, 'text_content', str(result)))\n"
+)
+
+# Importing markitdown costs about five seconds, so batch mode converts every
+# file inside one interpreter instead of paying that cost per file. The child
+# reads a JSON manifest of {input, output} jobs and reports one JSON line per
+# job, which keeps the markdown itself out of the framed stdout stream.
+BATCH_SNIPPET = (
+    "import json\n"
+    "import os\n"
+    "import sys\n"
+    "from markitdown import MarkItDown\n"
+    "with open(sys.argv[1], encoding='utf-8') as handle:\n"
+    "    jobs = json.load(handle)['jobs']\n"
+    "converter = MarkItDown()\n"
+    "for job in jobs:\n"
+    "    record = {'input': job['input'], 'output': job['output'], 'ok': False,\n"
+    "              'chars': 0, 'error': None}\n"
+    "    try:\n"
+    "        text = getattr(converter.convert(job['input']), 'text_content', '')\n"
+    "        os.makedirs(os.path.dirname(os.path.abspath(job['output'])), exist_ok=True)\n"
+    "        with open(job['output'], 'w', encoding='utf-8') as handle:\n"
+    "            handle.write(text)\n"
+    "        record['ok'] = True\n"
+    "        record['chars'] = len(text)\n"
+    "    except Exception as exc:\n"
+    "        record['error'] = f'{type(exc).__name__}: {exc}'\n"
+    "    print(json.dumps(record, ensure_ascii=False), flush=True)\n"
 )
 
 
@@ -108,12 +137,12 @@ def find_python(uv_path):
     return None
 
 
-def uv_command(uv_path, python_path):
+def uv_command(uv_path, python_path, snippet=CONVERT_SNIPPET):
     """Build the `uv run` command that performs one conversion."""
     cmd = [uv_path, "run", "--with", MARKITDOWN_WITH]
     if python_path:
         cmd += ["--python", python_path]
-    return cmd + ["python", "-c", CONVERT_SNIPPET]
+    return cmd + ["python", "-c", snippet]
 
 
 def convert_one(input_path, uv_path, python_path, output_path=None):
@@ -167,6 +196,51 @@ def collect_files(input_dir, recursive):
     return found
 
 
+def run_batch_jobs(jobs, uv_path, python_path):
+    """Convert every job in one interpreter. Returns one record per job."""
+    manifest = tempfile.NamedTemporaryFile(
+        "w", suffix=".json", delete=False, encoding="utf-8", prefix="markitdown-jobs-"
+    )
+    try:
+        json.dump({"jobs": jobs}, manifest, ensure_ascii=False)
+        manifest.close()
+
+        cmd = uv_command(uv_path, python_path, snippet=BATCH_SNIPPET) + [manifest.name]
+        print(f"🚀 Converting {len(jobs)} files in one interpreter...", file=sys.stderr)
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, encoding="utf-8", errors="replace",
+                env=child_env(),
+            )
+        except OSError as exc:
+            print(f"❌ Could not run uv: {exc}", file=sys.stderr)
+            return [None] * len(jobs)
+
+        records = {}
+        for line in (result.stdout or "").splitlines():
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            records[record.get("input")] = record
+
+        if result.returncode != 0 and not records:
+            lines = [line for line in (result.stderr or "").splitlines() if line.strip()]
+            print("❌ Batch run failed:", file=sys.stderr)
+            for line in lines[-5:]:
+                print(f"   {line}", file=sys.stderr)
+
+        return [records.get(job["input"]) for job in jobs]
+    finally:
+        try:
+            os.unlink(manifest.name)
+        except OSError:
+            pass
+
+
 def convert_batch(input_dir, output_dir, uv_path, python_path, recursive=False):
     """Convert every supported file, mirroring the input tree into output_dir."""
     files = collect_files(input_dir, recursive)
@@ -174,20 +248,37 @@ def convert_batch(input_dir, output_dir, uv_path, python_path, recursive=False):
         print(f"❌ No supported files found in {input_dir}", file=sys.stderr)
         return 1
 
-    converted = 0
-    failed = []
+    jobs = []
     for path in files:
         relative = os.path.relpath(path, input_dir)
         relative_stem = os.path.splitext(relative)[0]
-        output_path = os.path.join(output_dir, relative_stem + ".md")
-        if convert_one(path, uv_path, python_path, output_path) is None:
-            failed.append(path)
-        else:
+        jobs.append({
+            "input": path,
+            "output": os.path.join(output_dir, relative_stem + ".md"),
+        })
+
+    results = run_batch_jobs(jobs, uv_path, python_path)
+
+    converted = 0
+    failed = []
+    for job, record in zip(jobs, results):
+        if record and record.get("ok"):
             converted += 1
+            print(f"✅ {job['output']} ({record.get('chars', 0)} chars)", file=sys.stderr)
+            continue
+        failed.append(job["input"])
+        detail = (record or {}).get("error") or "no result (the converter stopped early)"
+        # markitdown wraps the real cause in a multi-line message; keep the head
+        # (exception type) and the tail (what actually threw).
+        parts = [line.strip() for line in detail.splitlines() if line.strip()]
+        shown = parts[0] if parts else detail
+        if len(parts) > 1:
+            shown = f"{shown} {parts[-1]}"
+        if len(shown) > 240:
+            shown = shown[:237] + "..."
+        print(f"❌ {job['input']}: {shown}", file=sys.stderr)
 
     print(f"📦 Batch finished: {converted} converted, {len(failed)} failed", file=sys.stderr)
-    for path in failed:
-        print(f"   ❌ {path}", file=sys.stderr)
     return 1 if failed else 0
 
 

@@ -52,30 +52,50 @@ def run_convert(args):
     return process.returncode, process.stdout, process.stderr
 
 
-def check_file_eval(spec):
-    """Convert one fixture to stdout and check the text."""
+def check_file_eval(spec, workdir):
+    """Convert one fixture and check the text, either from stdout or a file."""
     fixture = os.path.join(SKILL_DIR, spec["files"][0])
-    code, out, err = run_convert([fixture])
     problems = []
 
-    if code != 0:
-        problems.append(f"exit code {code}: {err.strip().splitlines()[-1] if err.strip() else 'no stderr'}")
-        return problems, ""
+    output_file = None
+    if spec.get("write_to_file"):
+        output_file = os.path.join(workdir, f"eval-{spec['id']}.md")
+        args = [fixture, "-o", output_file]
+    else:
+        args = [fixture]
+
+    code, out, err = run_convert(args)
+    expected_code = spec.get("expect_exit_code", 0)
+    if code != expected_code:
+        last = err.strip().splitlines()[-1] if err.strip() else "no stderr"
+        problems.append(f"exit code {code}, expected {expected_code}: {last}")
+
+    if output_file is not None:
+        if not os.path.isfile(output_file):
+            problems.append(f"no output file written: {output_file}")
+            text = ""
+        else:
+            with open(output_file, encoding="utf-8") as handle:
+                text = handle.read()
+        if out.strip():
+            problems.append(f"stdout should be empty when -o is used, got {len(out.strip())} chars")
+    else:
+        text = out
 
     for needle in spec.get("expect_contains", []):
-        if needle not in out:
+        if needle not in text:
             problems.append(f"missing expected text: {needle!r}")
     for needle in spec.get("expect_not_contains", []):
-        if needle in out:
+        if needle in text:
             problems.append(f"unexpected text present: {needle!r}")
 
-    length = len(out.strip())
+    length = len(text.strip())
     if length < spec.get("min_chars", 0):
         problems.append(f"output too short: {length} chars < {spec['min_chars']}")
     if "max_chars" in spec and length > spec["max_chars"]:
         problems.append(f"output too long: {length} chars > {spec['max_chars']}")
 
-    return problems, out
+    return problems, text
 
 
 def check_dir_eval(spec, workdir):
@@ -88,9 +108,14 @@ def check_dir_eval(spec, workdir):
 
     code, out, err = run_convert(args)
     problems = []
-    if code != 0:
-        problems.append(f"exit code {code}: {err.strip().splitlines()[-1] if err.strip() else 'no stderr'}")
-        return problems, out
+    expected_code = spec.get("expect_exit_code", 0)
+    if code != expected_code:
+        last = err.strip().splitlines()[-1] if err.strip() else "no stderr"
+        problems.append(f"exit code {code}, expected {expected_code}: {last}")
+
+    for needle in spec.get("expect_stderr_contains", []):
+        if needle not in err:
+            problems.append(f"stderr missing: {needle!r}")
 
     for relative, needle in spec.get("expect_files", {}).items():
         path = os.path.join(out_dir, relative)
@@ -138,7 +163,7 @@ def main():
             if spec.get("mode") == "dir":
                 problems, output = check_dir_eval(spec, workdir)
             else:
-                problems, output = check_file_eval(spec)
+                problems, output = check_file_eval(spec, workdir)
 
             if problems:
                 failures.append((label, problems, output))
