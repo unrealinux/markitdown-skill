@@ -22,6 +22,9 @@ def find_uv():
         "uv",
         "/usr/local/bin/uv",
         "/opt/homebrew/bin/uv",
+        os.path.expandvars(r"%APPDATA%\\Python\\Python314\\Scripts\\uv.exe"),
+        os.path.expanduser("~/AppData/Roaming/Python/Python314/Scripts/uv.exe"),
+        os.path.expanduser("~/.local/bin/uv.exe"),
     ]
     for cmd in candidates:
         if shutil.which(cmd) or os.path.exists(cmd):
@@ -42,6 +45,12 @@ def find_python312(uv_path):
         )
         if result.returncode == 0:
             lines = result.stdout.strip().split('\n')
+            # uv prints the resolved interpreter path first (works cross-platform)
+            for line in lines:
+                resolved = line.strip()
+                if resolved and os.path.exists(resolved):
+                    print(f"✅ Found Python 3.12 at: {resolved}", file=sys.stderr)
+                    return resolved
             for line in lines:
                 if 'python3.12' in line or '/python3.12' in line:
                     for candidate in [

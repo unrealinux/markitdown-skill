@@ -32,6 +32,12 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 markitdown package is auto-installed on first use via uv.
 
+**Windows:** use `py` (the `python` on PATH is the Windows Store stub and prints nothing) and no `~/.local/bin` prefix. uv is already installed at `%APPDATA%\Python\Python314\Scripts\uv.exe`, and Python 3.12 is registered with uv. Example:
+
+```bash
+py "C:/Users/Administrator/.agents/skills/markitdown/scripts/convert.py" document.pdf -o output.md
+```
+
 ## Usage
 
 ### Basic conversion
