@@ -123,6 +123,50 @@
       "min_chars": 40,
       "expect_contains": ["Fixture Heading", "Alpha"],
       "expect_not_contains": []
+    },
+    {
+      "id": 12,
+      "prompt": "把 evals/fixtures/collide 转成 Markdown（report.txt 和 report.csv 同名）",
+      "expected_output": "两个同名来源都要保留内容：report.txt.md 与 report.csv.md，不能互相覆盖",
+      "files": ["evals/fixtures/collide"],
+      "mode": "dir",
+      "recursive": false,
+      "expect_files": {
+        "report.txt.md": "from the text file",
+        "report.csv.md": "source",
+        "other.md": "unrelated"
+      },
+      "expect_absent_files": ["report.md"],
+      "expect_stderr_contains": ["keeping the source extension"],
+      "expect_stdout_empty": true
+    },
+    {
+      "id": 13,
+      "prompt": "包装脚本必须固定用 Python 3.12，不能回退到 uv 的默认解释器",
+      "expected_output": "始终传 --python 3.12；没有回退分支（3.14 上 extras 装不动，实测 15 分钟卡死）",
+      "files": ["scripts/convert.py"],
+      "mode": "source",
+      "expect_contains": [
+        "PYTHON_REQUEST = \"3.12\"",
+        "\"--python\", PYTHON_REQUEST",
+        "disambiguate_outputs"
+      ],
+      "expect_not_contains": ["find_python", "falling back to uv"]
+    },
+    {
+      "id": 14,
+      "prompt": "文档不能推荐 markitdown 里不存在的参数名",
+      "expected_output": "不再出现 use_azure_odai=True / use_azure_transcription=True / use_local_whisper=True；改用 docintel_endpoint",
+      "files": ["SKILL.md", "references/formats.md"],
+      "mode": "source",
+      "expect_contains": ["docintel_endpoint"],
+      "expect_not_contains": [
+        "use_azure_odai=",
+        "use_azure_transcription=",
+        "use_local_whisper=",
+        "azure_model=",
+        "azure_speech_key="
+      ]
     }
   ]
 }

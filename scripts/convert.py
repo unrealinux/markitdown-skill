@@ -24,6 +24,12 @@ import tempfile
 # Azure-backed extras (az-doc-intel, audio-transcription, ...) stay out.
 MARKITDOWN_WITH = "markitdown[docx,xls,xlsx,pptx,pdf]"
 
+# Always request 3.12 explicitly. Falling back to whatever interpreter uv prefers
+# is worse than failing: on 3.14 the extras have no ready wheels and the run
+# spends 15+ minutes downloading instead of reporting anything. When 3.12 is
+# missing uv installs it, which takes about a minute.
+PYTHON_REQUEST = "3.12"
+
 SUPPORTED_EXTENSIONS = {
     ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
     ".html", ".htm", ".csv", ".txt", ".json", ".xml", ".zip",
@@ -119,40 +125,23 @@ def find_uv():
     return None
 
 
-def find_python(uv_path):
-    """Ask uv for a 3.12 interpreter; returns None when unavailable."""
-    try:
-        result = subprocess.run(
-            [uv_path, "python", "find", "3.12"],
-            capture_output=True, text=True, timeout=600,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    for line in result.stdout.splitlines():
-        resolved = line.strip()
-        if resolved and os.path.exists(resolved):
-            return resolved
-    return None
-
-
-def uv_command(uv_path, python_path, snippet=CONVERT_SNIPPET):
+def uv_command(uv_path, snippet=CONVERT_SNIPPET):
     """Build the `uv run` command that performs one conversion."""
-    cmd = [uv_path, "run", "--with", MARKITDOWN_WITH]
-    if python_path:
-        cmd += ["--python", python_path]
-    return cmd + ["python", "-c", snippet]
+    return [
+        uv_path, "run", "--with", MARKITDOWN_WITH,
+        "--python", PYTHON_REQUEST,
+        "python", "-c", snippet,
+    ]
 
 
-def convert_one(input_path, uv_path, python_path, output_path=None):
+def convert_one(input_path, uv_path, output_path=None):
     """Convert a single file.
 
     Returns the Markdown text on success, None on failure. With output_path the
     Markdown goes to that file, otherwise to stdout.
     """
     print(f"📄 Converting: {input_path}", file=sys.stderr)
-    cmd = uv_command(uv_path, python_path) + [input_path]
+    cmd = uv_command(uv_path) + [input_path]
 
     try:
         result = subprocess.run(
@@ -196,7 +185,7 @@ def collect_files(input_dir, recursive):
     return found
 
 
-def run_batch_jobs(jobs, uv_path, python_path):
+def run_batch_jobs(jobs, uv_path):
     """Convert every job in one interpreter. Returns one record per job."""
     manifest = tempfile.NamedTemporaryFile(
         "w", suffix=".json", delete=False, encoding="utf-8", prefix="markitdown-jobs-"
@@ -205,7 +194,7 @@ def run_batch_jobs(jobs, uv_path, python_path):
         json.dump({"jobs": jobs}, manifest, ensure_ascii=False)
         manifest.close()
 
-        cmd = uv_command(uv_path, python_path, snippet=BATCH_SNIPPET) + [manifest.name]
+        cmd = uv_command(uv_path, snippet=BATCH_SNIPPET) + [manifest.name]
         print(f"🚀 Converting {len(jobs)} files in one interpreter...", file=sys.stderr)
         try:
             result = subprocess.run(
@@ -241,7 +230,36 @@ def run_batch_jobs(jobs, uv_path, python_path):
             pass
 
 
-def convert_batch(input_dir, output_dir, uv_path, python_path, recursive=False):
+def disambiguate_outputs(jobs):
+    """Stop same-stem sources in one directory from overwriting each other.
+
+    report.txt and report.csv both map to report.md, so one conversion silently
+    replaced the other. Every member of a colliding group keeps its source
+    extension instead: report.txt.md and report.csv.md.
+    """
+    counts = {}
+    for job in jobs:
+        key = os.path.normcase(job["output"])
+        counts[key] = counts.get(key, 0) + 1
+
+    renamed = []
+    for job in jobs:
+        if counts[os.path.normcase(job["output"])] < 2:
+            continue
+        stem, _ = os.path.splitext(job["output"])
+        extension = os.path.splitext(job["input"])[1].lstrip(".") or "file"
+        job["output"] = f"{stem}.{extension}.md"
+        renamed.append(job)
+
+    if renamed:
+        print("⚠️  Same output name from different sources; keeping the source "
+              "extension:", file=sys.stderr)
+        for job in renamed:
+            print(f"   {os.path.basename(job['input'])} -> "
+                  f"{os.path.basename(job['output'])}", file=sys.stderr)
+
+
+def convert_batch(input_dir, output_dir, uv_path, recursive=False):
     """Convert every supported file, mirroring the input tree into output_dir."""
     files = collect_files(input_dir, recursive)
     if not files:
@@ -257,7 +275,8 @@ def convert_batch(input_dir, output_dir, uv_path, python_path, recursive=False):
             "output": os.path.join(output_dir, relative_stem + ".md"),
         })
 
-    results = run_batch_jobs(jobs, uv_path, python_path)
+    disambiguate_outputs(jobs)
+    results = run_batch_jobs(jobs, uv_path)
 
     converted = 0
     failed = []
@@ -308,25 +327,19 @@ def main():
         print("  Windows: uv is expected at %APPDATA%\\Python\\Python314\\Scripts\\uv.exe", file=sys.stderr)
         sys.exit(1)
 
-    print("🔍 Resolving Python 3.12 via uv (first run may download it)...", file=sys.stderr)
-    python_path = find_python(uv_path)
-    if not python_path:
-        print("⚠️  Python 3.12 not found via uv; falling back to uv's default interpreter",
-              file=sys.stderr)
-
     if os.path.isdir(args.input):
         if args.output:
             print("Error: -o applies to single files; use --output-dir for directories",
                   file=sys.stderr)
             sys.exit(1)
         output_dir = args.output_dir or (args.input.rstrip("/\\") + "_markdown")
-        sys.exit(convert_batch(args.input, output_dir, uv_path, python_path, args.recursive))
+        sys.exit(convert_batch(args.input, output_dir, uv_path, args.recursive))
 
     if args.output and os.path.isdir(args.output):
         print(f"Error: {args.output} is a directory; use --output-dir", file=sys.stderr)
         sys.exit(1)
 
-    text = convert_one(args.input, uv_path, python_path, args.output)
+    text = convert_one(args.input, uv_path, args.output)
     sys.exit(0 if text is not None else 1)
 
 

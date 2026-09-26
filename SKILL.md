@@ -75,15 +75,19 @@ file. That delay is normal — do not kill the process and retry.
 
 ## Limitations
 
-- **No OCR.** markitdown has no OCR engine. A scanned PDF or an image containing
-  text converts to empty output. OCR it first (`tesseract page.png out`) or use
-  markitdown's Azure Document Intelligence backend (`MarkItDown(use_azure_odai=True)`,
-  needs `pip install "markitdown[all]"` plus Azure credentials).
+- **No OCR engine.** A scanned PDF or an image of text converts to empty output.
+  Three routes that actually work, none of them a flag on this wrapper:
+  - OCR first: `tesseract page.png out`, then convert the text.
+  - Vision model: `MarkItDown(llm_client=client, llm_model="gpt-4o")` — the image
+    converter sends pictures to an LLM (see `references/formats.md`).
+  - Azure Document Intelligence: `MarkItDown(docintel_endpoint="https://<resource>.cognitiveservices.azure.com/")`,
+    or the CLI's `--use-docintel`, with `MARKITDOWN_DOCINTEL_ENDPOINT` as the
+    environment fallback. Note: there is no `use_azure_odai` parameter in 0.1.8.
 - **No CSV export.** Spreadsheets and tables come back as Markdown tables. Use
   `pandas` or `openpyxl` directly when you need CSV.
 - **No image extraction.** Images inside documents are referenced, not written to disk.
-- **Azure/Whisper features are out of reach here.** Transcription and Doc
-  Intelligence need the markitdown Python API, not this wrapper.
+- **No audio transcription.** It needs the `audio-transcription` extra
+  (`speech_recognition` + `pydub` + ffmpeg) and the wrapper does not install it.
 - **`.doc` / `.ppt`** go through LibreOffice; install it or convert to `.docx` /
   `.pptx` first.
 

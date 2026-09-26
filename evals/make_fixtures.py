@@ -262,6 +262,16 @@ def main():
         )
         archive.writestr("word/document.xml", "<<<not xml at all")
 
+    # Two sources, one stem: report.txt and report.csv both used to write report.md.
+    collide = os.path.join(FIXTURES, "collide")
+    os.makedirs(collide, exist_ok=True)
+    with open(os.path.join(collide, "report.txt"), "w", encoding="utf-8") as handle:
+        handle.write("from the text file\n")
+    with open(os.path.join(collide, "report.csv"), "w", encoding="utf-8") as handle:
+        handle.write("source,alpha\n")
+    with open(os.path.join(collide, "other.txt"), "w", encoding="utf-8") as handle:
+        handle.write("unrelated\n")
+
     print(f"fixtures written to {FIXTURES}")
 
 

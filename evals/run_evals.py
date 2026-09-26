@@ -136,6 +136,25 @@ def check_dir_eval(spec, workdir):
     return problems, out
 
 
+def check_source_eval(spec):
+    """Grep the skill's own files. Guards against doc and config regressions."""
+    problems = []
+    for relative in spec["files"]:
+        path = os.path.join(SKILL_DIR, relative)
+        if not os.path.isfile(path):
+            problems.append(f"missing file: {relative}")
+            continue
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        for needle in spec.get("expect_contains", []):
+            if needle not in text:
+                problems.append(f"{relative} is missing {needle!r}")
+        for needle in spec.get("expect_not_contains", []):
+            if needle in text:
+                problems.append(f"{relative} still contains {needle!r}")
+    return problems, ""
+
+
 def main():
     setup_stdio()
     if not os.path.isdir(FIXTURES):
@@ -160,7 +179,9 @@ def main():
                 print(f"     missing fixture {missing[0]} — run evals/make_fixtures.py")
                 continue
 
-            if spec.get("mode") == "dir":
+            if spec.get("mode") == "source":
+                problems, output = check_source_eval(spec)
+            elif spec.get("mode") == "dir":
                 problems, output = check_dir_eval(spec, workdir)
             else:
                 problems, output = check_file_eval(spec, workdir)
