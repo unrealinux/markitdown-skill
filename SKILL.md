@@ -12,11 +12,12 @@ A universal document reader powered by [microsoft/markitdown](https://github.com
 
 | Task | Approach |
 |------|----------|
-| **Convert single file** | Run `scripts/convert.py <file>` |
-| **Batch convert folder** | Run `scripts/convert.py <folder>` |
-| **Extract tables only** | Add `--tables` flag |
-| **Extract images** | Add `--images <dir>` flag |
-| **OCR on scanned docs** | Add `--ocr` flag (auto-enabled for images/PDFs with no text) |
+| **Convert single file** | `scripts/convert.py <file>` — Markdown goes to stdout |
+| **Save to a file** | Add `-o output.md` |
+| **Batch convert folder** | `scripts/convert.py <folder> --output-dir <dir>` |
+| **Include subfolders** | Add `--recursive` (output mirrors the input tree) |
+
+**Not provided by this wrapper:** OCR, CSV table export, image extraction. markitdown ships no OCR engine — scanned PDFs and pictures of text come back empty. See [Limitations](#limitations).
 
 ## Prerequisites
 
@@ -43,7 +44,7 @@ py "C:/Users/Administrator/.agents/skills/markitdown/scripts/convert.py" documen
 ### Basic conversion
 
 ```bash
-# Convert a single file to stdout
+# Markdown to stdout
 python3 <skill_dir>/scripts/convert.py document.pdf
 
 # Save to file
@@ -53,25 +54,27 @@ python3 <skill_dir>/scripts/convert.py document.docx -o output.md
 ### Batch conversion
 
 ```bash
-# Convert all files in a directory
-python3 <skill_dir>/scripts/convert.py /path/to/folder -o ./output/
+# One .md per supported file (top level only)
+python3 <skill_dir>/scripts/convert.py /path/to/folder --output-dir ./output
 
-# Wildcard patterns
-python3 <skill_dir>/scripts/convert.py *.pdf --output-dir ./markdown/
+# Include subdirectories; output mirrors the input tree, so same-named
+# files in different folders no longer overwrite each other
+python3 <skill_dir>/scripts/convert.py /path/to/folder --output-dir ./markdown --recursive
 ```
 
-### Content extraction
+## Limitations
 
-```bash
-# Extract only tables (returns CSV format)
-python3 <skill_dir>/scripts/convert.py data.xlsx --tables
-
-# Extract and save images to a directory
-python3 <skill_dir>/scripts/convert.py scanned.pdf --images ./images/
-
-# Force OCR (useful for image-based PDFs)
-python3 <skill_dir>/scripts/convert.py scan.jpg --ocr
-```
+- **No OCR.** markitdown has no OCR engine. A scanned PDF or an image containing
+  text converts to empty output. OCR it first (`tesseract page.png out`) or use
+  markitdown's Azure Document Intelligence backend (`MarkItDown(use_azure_odai=True)`,
+  needs `pip install "markitdown[all]"` plus Azure credentials).
+- **No CSV export.** Spreadsheets and tables come back as Markdown tables. Use
+  `pandas` or `openpyxl` directly when you need CSV.
+- **No image extraction.** Images inside documents are referenced, not written to disk.
+- **Azure/Whisper features are out of reach here.** Transcription and Doc
+  Intelligence need the markitdown Python API, not this wrapper.
+- **`.doc` / `.ppt`** go through LibreOffice; install it or convert to `.docx` /
+  `.pptx` first.
 
 ## Supported Formats
 
@@ -79,10 +82,10 @@ See `references/formats.md` for detailed format-specific notes.
 
 | Category | Formats | Notes |
 |----------|---------|-------|
-| Documents | `.pdf`, `.docx`, `.doc` | PDF OCR requires `pdf2image` + `pytesseract` |
-| Spreadsheets | `.xlsx`, `.xls`, `.csv` | Tables extracted with structure preserved |
+| Documents | `.pdf`, `.docx`, `.doc` | PDF needs a text layer (no OCR) |
+| Spreadsheets | `.xlsx`, `.xls`, `.csv` | All sheets' tables as Markdown tables |
 | Presentations | `.pptx`, `.ppt` | Slides converted to ordered Markdown |
-| Images | `.jpg`, `.png`, `.gif`, `.bmp`, `.webp` | Auto-OCR if text detected |
+| Images | `.jpg`, `.png`, `.gif`, `.bmp`, `.webp` | Metadata only — **no OCR**, text in images is lost |
 | Web | `.html`, `.htm` | Stripped of scripts/styles |
 | Archives | `.zip` (with documents) | Extracts and converts contained files |
 | Audio | `.mp3`, `.wav`, `.m4a` | Speech-to-text via Azure or local |
@@ -92,7 +95,7 @@ See `references/formats.md` for detailed format-specific notes.
 The bundled script at `scripts/convert.py` wraps markitdown with sensible defaults:
 
 ```bash
-~/.local/bin/uv run --with markitdown --python 3.12 python scripts/convert.py INPUT [-o OUTPUT] [--tables] [--ocr] [--recursive] [--output-dir DIR]
+~/.local/bin/uv run --with markitdown --python 3.12 python scripts/convert.py INPUT [-o OUTPUT] [--recursive] [--output-dir DIR]
 ```
 
 Or set up an alias for convenience:
@@ -107,10 +110,12 @@ Common issues and fixes:
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `ModuleNotFoundError: markitdown` | Package not installed | Run `pip3 install markitdown` |
-| `pdf2image` missing | OCR on PDFs | Install `pip3 install pdf2image pytesseract` + system tesseract |
-| Blank output from PDF | Scanned/image PDF without OCR | Use `--ocr` flag |
-| Encoding warnings | Non-standard document encoding | Try `--ocr` or convert to PDF first |
+| `uv not found` | uv missing or not on PATH | Install uv; on Windows it lives at `%APPDATA%\Python\Python314\Scripts\uv.exe` |
+| `Conversion failed: UnsupportedFormatException` | File type markitdown cannot read | Convert to PDF or `.docx` first |
+| Blank output from PDF | Scanned PDF without a text layer | OCR it first — this wrapper has no OCR |
+| Blank output from image | markitdown never OCRs images | OCR it first (`tesseract`) |
+| `UnicodeEncodeError: 'gbk' codec` | Older wrapper without UTF-8 stdio | Update `scripts/convert.py` (it sets `PYTHONUTF8=1`) |
+| `UnicodeDecodeError` reading the `.md` | Source file is not UTF-8 | Re-save the source as UTF-8, then retry |
 
 ## Workflow Examples
 
@@ -119,14 +124,17 @@ Common issues and fixes:
 python3 <skill_dir>/scripts/convert.py report.pdf | head -50
 ```
 
-### "Extract all tables from this Excel file"
+### "Extract the data from this Excel file"
 ```bash
-python3 <skill_dir>/scripts/convert.py data.xlsx --tables
+python3 <skill_dir>/scripts/convert.py data.xlsx -o data.md
 ```
+Returns Markdown tables. For CSV, use `pandas` or `openpyxl` directly.
 
 ### "Convert my scanned invoice to text"
 ```bash
-python3 <skill_dir>/scripts/convert.py invoice.jpg --ocr
+# No OCR here: OCR first, then convert the text layer
+tesseract invoice.png invoice --psm 6
+python3 <skill_dir>/scripts/convert.py invoice.txt
 ```
 
 ### "Turn this folder of docs into Markdown"
@@ -151,4 +159,4 @@ Prefer direct tools (pypdf, python-docx, etc.) when:
 
 - For format-specific details and known limitations, read `references/formats.md`
 - For programmatic Python usage, see the [markitdown GitHub](https://github.com/microsoft/markitdown)
-- For advanced OCR configuration, see the references file
+- For Azure Document Intelligence, transcription or plugin support, call the markitdown Python API directly — this wrapper does not expose those options

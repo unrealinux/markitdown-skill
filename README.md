@@ -4,39 +4,50 @@
 
 ## 功能
 
-- 📄 PDF 转换（支持 OCR）
+- 📄 PDF 转换（需要 PDF 自带文字层）
 - 📝 Word 文档 (.docx, .doc)
 - 📊 Excel 电子表格 (.xlsx)
 - 📑 PowerPoint 演示文稿 (.pptx)
-- 🖼️ 图片 OCR
-- 🎵 音频转文字
+- 🖼️ 图片元数据（**不做 OCR**）
+- 🎵 音频转文字（需 Azure/Whisper，走 Python API，不在本脚本内）
 - 🌐 HTML 页面
-- 📦 批量文件夹转换
+- 📦 批量文件夹转换（保留子目录结构）
 
 ## 安装
 
-**需要 Python 3.10+**
+**需要 Python 3.10+ 和 [uv](https://astral.sh/uv)。** markitdown 本体由 uv 按需安装（首次运行会下载，之后走缓存），不需要手动 pip。
 
 ```bash
-# 安装 Python 3.12（如果还没有）
-brew install python@3.12
+# 安装 uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 安装 markitdown
-pip3 install markitdown
+# 确认 uv 能找到 Python 3.12
+uv python list
 ```
 
 ## 使用
 
 ```bash
-# 转换单个文件
+# 转换单个文件（Markdown 输出到 stdout）
+python3 <skill_dir>/scripts/convert.py document.pdf
+
+# 保存到文件
 python3 <skill_dir>/scripts/convert.py document.pdf -o output.md
 
-# 批量转换
+# 批量转换（--recursive 保留子目录结构）
 python3 <skill_dir>/scripts/convert.py ./documents --output-dir ./markdown --recursive
 
-# 提取表格
-python3 <skill_dir>/scripts/convert.py data.xlsx --tables
+# 表格：xlsx/csv 会转成 Markdown 表格，没有 CSV 导出选项
+python3 <skill_dir>/scripts/convert.py data.xlsx -o data.md
 ```
+
+## 已知限制
+
+- **不支持 OCR**：扫描件 PDF 和图片转出来是空的。需要先 OCR
+  （`tesseract`），或改用 markitdown 的 Azure Document Intelligence 接口。
+- **不支持导出 CSV**：表格以 Markdown 表格返回，要 CSV 请用 pandas/openpyxl。
+- **不提取图片**：文档内的图片只保留引用。
+- **Windows**：用 `py` 而不是 `python`（PATH 上的 `python` 是 Store 占位符，无输出）。
 
 ## 文件结构
 

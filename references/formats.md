@@ -6,13 +6,19 @@ This reference contains format-specific behavior, limitations, and tips for mark
 
 ### Text-based PDFs
 - **Best result**: Clean extraction with preserved headings and structure
-- **Tip**: If text extraction fails, try `--ocr` flag
 - **Limitation**: Complex layouts (multi-column) may have reading order issues
+- **If output is empty**: the PDF has no text layer (it is a scan). There is no
+  `--ocr` flag — see below.
 
 ### Scanned/Image PDFs
-- **Requirement**: `--ocr` flag needed
-- **Dependencies**: `pip3 install pdf2image pytesseract` + system `tesseract`
-- **Alternative**: Use Azure backend for better accuracy:
+- **markitdown has no OCR engine.** A scanned PDF converts to empty output.
+- **Workaround 1 — OCR first, then convert the text layer**:
+  ```bash
+  pdftoppm -r 300 -png scan.pdf page
+  tesseract page-1.png page-1
+  # repeat per page, then concatenate or convert page-1.txt
+  ```
+- **Workaround 2 — Azure Document Intelligence** (best accuracy, needs creds):
   ```python
   from markitdown import MarkItDown
   converter = MarkItDown(use_azure_odai=True)
@@ -57,9 +63,10 @@ This reference contains format-specific behavior, limitations, and tips for mark
   ```
 
 ### Tables
-- Use `--tables` flag for clean CSV extraction
+- Tables are emitted as Markdown tables; there is no CSV flag in this wrapper
 - Formulas are evaluated and shown as values
 - Hidden rows/columns are included
+- For CSV, read the workbook with `pandas.read_excel` / `openpyxl` directly
 
 ### Charts
 - Charts are NOT extracted as images
@@ -83,12 +90,14 @@ This reference contains format-specific behavior, limitations, and tips for mark
 
 ## Images (JPG, PNG, GIF, BMP, WEBP)
 
-### Automatic OCR
-- markitdown auto-detects text in images
-- No `--ocr` flag needed for images (unlike PDFs)
-- Accuracy depends on image quality and resolution
+### No OCR
+- markitdown extracts image **metadata (EXIF)**, not text. An image containing a
+  paragraph of text converts to empty output — verified: a PNG reading
+  `HELLO OCR 12345` produced zero characters.
+- To get text: run `tesseract image.png out` first, or send the image to a vision
+  model / Azure Document Intelligence.
 
-### Best Results
+### Best OCR Results (with external tesseract)
 - High resolution (300+ DPI)
 - Clear, undistorted text
 - Good contrast
@@ -126,12 +135,14 @@ converter = MarkItDown(use_local_whisper=True)
 - Background music/noise reduces accuracy
 - Multiple speakers: Basic separation only
 - Long files: May time out without Azure backend
+- **Not reachable through this wrapper**, which exposes no transcription options;
+  call the markitdown Python API directly.
 
 ## CSV and Plain Text
 
 ### CSV
 - Direct conversion with proper column handling
-- Use `--tables` flag for cleaner output
+- The whole file becomes one Markdown table
 
 ### Text Files
 - Already in text format — markitdown passes through unchanged
@@ -151,18 +162,20 @@ converter = MarkItDown(use_local_whisper=True)
 
 | Issue | Cause | Workaround |
 |-------|-------|------------|
-| Empty output for PDF | Scanned document | Use `--ocr` |
-| Encoding warnings | Non-UTF8 files | Convert to UTF-8 first |
+| Empty output for PDF | Scanned document, no text layer | OCR first (tesseract), or Azure Doc Intelligence |
+| Empty output for image | markitdown does not OCR images | OCR first, or use a vision model |
+| Encoding mismatch | Source file is not UTF-8 | Re-save as UTF-8, then retry |
 | Slow conversion | Large files | Process in batches |
-| Missing images | Image references broken | Check original file paths |
-| Table formatting broken | Complex merged cells | Use `--tables` flag |
+| Missing images | Images are referenced, not extracted | Extract them from the source document yourself |
+| Table formatting broken | Complex merged cells | Read the workbook with `openpyxl` |
 
 ## Performance Tips
 
-1. **Batch processing**: Use `--recursive` for directories
-2. **Parallel conversion**: Run multiple instances for independent files
-3. **Stream output**: Use stdout for piped processing
-4. **Skip unnecessary formats**: Don't use OCR if not needed
+1. **Batch processing**: pass a directory with `--output-dir` (add `--recursive` for subfolders)
+2. **Parallel conversion**: run multiple instances for independent files
+3. **Stream output**: single-file mode writes to stdout, so you can pipe it
+4. **Warm the cache**: the first run downloads markitdown via uv; later runs reuse it
+5. **Skip what you cannot read**: don't send scans or images through this tool expecting text
 
 ## Azure Backend (Advanced)
 
