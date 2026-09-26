@@ -17,6 +17,11 @@ import shutil
 import subprocess
 import sys
 
+# markitdown pulls its format support in as optional extras: the bare package
+# cannot read .docx, .xlsx, .pptx or .pdf and raises MissingDependencyException.
+# Azure-backed extras (az-doc-intel, audio-transcription, ...) stay out.
+MARKITDOWN_WITH = "markitdown[docx,xls,xlsx,pptx,pdf]"
+
 SUPPORTED_EXTENSIONS = {
     ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
     ".html", ".htm", ".csv", ".txt", ".json", ".xml", ".zip",
@@ -105,7 +110,7 @@ def find_python(uv_path):
 
 def uv_command(uv_path, python_path):
     """Build the `uv run` command that performs one conversion."""
-    cmd = [uv_path, "run", "--with", "markitdown"]
+    cmd = [uv_path, "run", "--with", MARKITDOWN_WITH]
     if python_path:
         cmd += ["--python", python_path]
     return cmd + ["python", "-c", CONVERT_SNIPPET]
@@ -131,8 +136,9 @@ def convert_one(input_path, uv_path, python_path, output_path=None):
 
     if result.returncode != 0:
         lines = [line for line in (result.stderr or "").splitlines() if line.strip()]
-        detail = lines[-1] if lines else "unknown error"
-        print(f"❌ Conversion failed: {detail}", file=sys.stderr)
+        print("❌ Conversion failed:", file=sys.stderr)
+        for line in lines[-5:]:
+            print(f"   {line}", file=sys.stderr)
         return None
 
     text = result.stdout

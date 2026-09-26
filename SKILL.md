@@ -31,7 +31,10 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ~/.local/bin/uv python list
 ```
 
-markitdown package is auto-installed on first use via uv.
+markitdown package is auto-installed on first use via uv, as
+`markitdown[docx,xls,xlsx,pptx,pdf]`. The extras matter: the bare package cannot
+read `.docx`, `.xlsx`, `.pptx` or `.pdf` and raises `MissingDependencyException`.
+Expect a 1-2 minute download on the very first conversion; later runs hit the cache.
 
 **Windows:** use `py` (the `python` on PATH is the Windows Store stub and prints nothing) and no `~/.local/bin` prefix. uv is already installed at `%APPDATA%\Python\Python314\Scripts\uv.exe`, and Python 3.12 is registered with uv. Example:
 
@@ -95,7 +98,7 @@ See `references/formats.md` for detailed format-specific notes.
 The bundled script at `scripts/convert.py` wraps markitdown with sensible defaults:
 
 ```bash
-~/.local/bin/uv run --with markitdown --python 3.12 python scripts/convert.py INPUT [-o OUTPUT] [--recursive] [--output-dir DIR]
+~/.local/bin/uv run --with "markitdown[docx,xls,xlsx,pptx,pdf]" --python 3.12 python scripts/convert.py INPUT [-o OUTPUT] [--recursive] [--output-dir DIR]
 ```
 
 Or set up an alias for convenience:
@@ -111,6 +114,7 @@ Common issues and fixes:
 | Error | Cause | Fix |
 |-------|-------|-----|
 | `uv not found` | uv missing or not on PATH | Install uv; on Windows it lives at `%APPDATA%\Python\Python314\Scripts\uv.exe` |
+| `MissingDependencyException` (`markitdown[docx]` hint) | markitdown installed without format extras | The wrapper pins `markitdown[docx,xls,xlsx,pptx,pdf]`; a bare `pip install markitdown` cannot read Office files or PDFs |
 | `Conversion failed: UnsupportedFormatException` | File type markitdown cannot read | Convert to PDF or `.docx` first |
 | Blank output from PDF | Scanned PDF without a text layer | OCR it first — this wrapper has no OCR |
 | Blank output from image | markitdown never OCRs images | OCR it first (`tesseract`) |
@@ -141,6 +145,19 @@ python3 <skill_dir>/scripts/convert.py invoice.txt
 ```bash
 python3 <skill_dir>/scripts/convert.py ./documents --output-dir ./markdown --recursive
 ```
+
+## Evals
+
+`evals/run_evals.py` drives this wrapper over generated fixtures and asserts the
+converted text. Fixtures are built by stdlib only, so a fresh clone can run them:
+
+```bash
+python3 evals/make_fixtures.py && python3 evals/run_evals.py
+```
+
+Covers: txt / csv / html / docx / pdf text extraction; batch mode with nested
+directories (same-named files must not overwrite); and the no-OCR limitation for
+images, asserted as empty output so it fails loudly if that ever changes.
 
 ## When to Use This Skill
 

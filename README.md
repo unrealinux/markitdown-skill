@@ -25,6 +25,16 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv python list
 ```
 
+脚本实际安装的是 `markitdown[docx,xls,xlsx,pptx,pdf]`：基础包读不了 Office 和 PDF，会报 `MissingDependencyException`。首次转换会下载依赖（1-2 分钟），之后走缓存。
+
+## 测试
+
+```bash
+python3 evals/make_fixtures.py && python3 evals/run_evals.py
+```
+
+夹具由标准库生成（txt/csv/html/docx/pdf/png），7 条评测覆盖文本提取、批量目录、以及「markitdown 不能 OCR」这条已知限制。
+
 ## 使用
 
 ```bash
