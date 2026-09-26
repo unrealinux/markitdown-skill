@@ -11,12 +11,93 @@ Rebuilds evals/fixtures/ from scratch every run.
 import os
 import shutil
 import struct
+import subprocess
 import sys
 import zipfile
 import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURES = os.path.join(HERE, "fixtures")
+
+# xlsx and pptx fixtures are built with the real Office libraries, because a
+# hand-rolled OOXML package has to satisfy every consumer (openpyxl, python-pptx)
+# far more strictly than the zipfile-based .docx fixture does.
+OFFICE_SCRIPT = '''
+import os, sys
+out = sys.argv[1]
+
+from openpyxl import Workbook
+book = Workbook()
+sheet = book.active
+sheet.title = "Sales"
+sheet.append(["Region", "Sales"])
+sheet.append(["North", "120"])
+sheet.append(["South", "90"])
+book.save(os.path.join(out, "sample.xlsx"))
+
+from pptx import Presentation
+from pptx.util import Inches
+prs = Presentation()
+first = prs.slides.add_slide(prs.slide_layouts[5])
+first.shapes.title.text = "PPTX Fixture Title"
+second = prs.slides.add_slide(prs.slide_layouts[1])
+second.shapes.title.text = "Second Slide"
+second.placeholders[1].text = "Second slide body with office fixture"
+prs.save(os.path.join(out, "sample.pptx"))
+print("office fixtures written")
+'''
+
+
+def find_uv():
+    """Same discovery order as scripts/convert.py."""
+    for cmd in [
+        os.path.expanduser("~/.local/bin/uv"),
+        "uv",
+        "/usr/local/bin/uv",
+        "/opt/homebrew/bin/uv",
+        os.path.join(os.environ.get("APPDATA", ""), "Python", "Python314", "Scripts", "uv.exe"),
+        os.path.expanduser("~/AppData/Roaming/Python/Python314/Scripts/uv.exe"),
+        os.path.expanduser("~/.local/bin/uv.exe"),
+    ]:
+        if cmd and (shutil.which(cmd) or os.path.exists(cmd)):
+            return cmd
+    return None
+
+
+def write_office_fixtures():
+    """Build sample.xlsx / sample.pptx through uv; returns True on success."""
+    uv = find_uv()
+    if not uv:
+        print("uv not found: skipping sample.xlsx and sample.pptx")
+        return False
+    try:
+        found = subprocess.run([uv, "python", "find", "3.12"],
+                               capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.SubprocessError):
+        found = None
+    python_path = None
+    if found is not None and found.returncode == 0:
+        for line in found.stdout.splitlines():
+            if line.strip() and os.path.exists(line.strip()):
+                python_path = line.strip()
+                break
+
+    cmd = [uv, "run", "--with", "openpyxl", "--with", "python-pptx"]
+    if python_path:
+        cmd += ["--python", python_path]
+    cmd += ["python", "-c", OFFICE_SCRIPT, FIXTURES]
+
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    result = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", env=env)
+    if result.returncode != 0:
+        print("could not build xlsx/pptx fixtures (network needed for uv extras):")
+        for line in [l for l in (result.stderr or "").splitlines() if l.strip()][-3:]:
+            print(f"  {line}")
+        return False
+    print((result.stdout or "").strip())
+    return True
 
 
 def setup_stdio():
@@ -153,6 +234,7 @@ def main():
     write_docx(os.path.join(FIXTURES, "sample.docx"))
     write_pdf(os.path.join(FIXTURES, "sample.pdf"))
     write_png(os.path.join(FIXTURES, "sample.png"))
+    write_office_fixtures()
 
     tree = os.path.join(FIXTURES, "tree")
     for relative, text in [

@@ -79,6 +79,26 @@
       "max_chars": 50,
       "expect_contains": [],
       "expect_not_contains": ["HELLO"]
+    },
+    {
+      "id": 8,
+      "prompt": "把 evals/fixtures/sample.xlsx 里的数据提取出来",
+      "expected_output": "Excel 转成 Markdown 表格，表头和两行数据都在",
+      "files": ["evals/fixtures/sample.xlsx"],
+      "mode": "file",
+      "min_chars": 20,
+      "expect_contains": ["Region", "Sales", "North", "120", "South", "90"],
+      "expect_not_contains": []
+    },
+    {
+      "id": 9,
+      "prompt": "把 evals/fixtures/sample.pptx 的两页幻灯片转成文本",
+      "expected_output": "每页幻灯片按顺序输出，标题和正文都提取到",
+      "files": ["evals/fixtures/sample.pptx"],
+      "mode": "file",
+      "min_chars": 40,
+      "expect_contains": ["PPTX Fixture Title", "Second Slide", "Second slide body"],
+      "expect_not_contains": []
     }
   ]
 }

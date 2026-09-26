@@ -22,6 +22,7 @@ FIXTURES = os.path.join(HERE, "fixtures")
 
 GREEN = "\033[32m"
 RED = "\033[31m"
+YELLOW = "\033[33m"
 DIM = "\033[2m"
 RESET = "\033[0m"
 
@@ -32,14 +33,14 @@ def setup_stdio():
     Without the reconfigure the Windows ANSI code page (cp936) kills the run
     when a fixture contains emoji or rare CJK.
     """
-    global GREEN, RED, DIM, RESET
+    global GREEN, RED, YELLOW, DIM, RESET
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
         except (AttributeError, ValueError):
             pass
     if not sys.stdout.isatty() or os.environ.get("NO_COLOR"):
-        GREEN = RED = DIM = RESET = ""
+        GREEN = RED = YELLOW = DIM = RESET = ""
 
 
 def run_convert(args):
@@ -121,10 +122,19 @@ def main():
 
     failures = []
     failed_ids = []
+    skipped_ids = []
     workdir = tempfile.mkdtemp(prefix="markitdown-evals-")
     try:
         for spec in specs:
             label = f"[{spec['id']}] {spec['prompt']}"
+            missing = [f for f in spec.get("files", [])
+                       if not os.path.exists(os.path.join(SKILL_DIR, f))]
+            if missing:
+                skipped_ids.append(spec["id"])
+                print(f"{YELLOW}SKIP{RESET} {label}")
+                print(f"     missing fixture {missing[0]} — run evals/make_fixtures.py")
+                continue
+
             if spec.get("mode") == "dir":
                 problems, output = check_dir_eval(spec, workdir)
             else:
@@ -144,8 +154,12 @@ def main():
         shutil.rmtree(workdir, ignore_errors=True)
 
     total = len(specs)
-    passed = total - len(failures)
-    print(f"\n{passed}/{total} evals passed")
+    passed = total - len(failures) - len(skipped_ids)
+    summary = f"\n{passed}/{total} evals passed"
+    if skipped_ids:
+        ids = ", ".join(str(value) for value in skipped_ids)
+        summary += f", {len(skipped_ids)} skipped (ids: {ids})"
+    print(summary)
     if failed_ids:
         ids = ", ".join(str(value) for value in failed_ids)
         print(f"{RED}failed ids: {ids}{RESET}")

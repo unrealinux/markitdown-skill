@@ -33,7 +33,9 @@ uv python list
 python3 evals/make_fixtures.py && python3 evals/run_evals.py
 ```
 
-夹具由标准库生成（txt/csv/html/docx/pdf/png），7 条评测覆盖文本提取、批量目录、以及「markitdown 不能 OCR」这条已知限制。
+夹具中的 txt/csv/html/docx/pdf/png 与目录树由标准库生成，不需要联网；`sample.xlsx` / `sample.pptx` 通过 uv + `openpyxl` + `python-pptx` 生成（手写 OOXML 很难同时满足这两个读取器），拿不到网络时这两条评测显示为 SKIP 而不是失败。
+
+共 9 条评测，覆盖文本提取（txt/csv/html/docx/pdf/xlsx/pptx）、批量目录结构，以及「markitdown 不能 OCR」这条已知限制。
 
 ## 使用
 

@@ -155,8 +155,15 @@ converted text. Fixtures are built by stdlib only, so a fresh clone can run them
 python3 evals/make_fixtures.py && python3 evals/run_evals.py
 ```
 
-Covers: txt / csv / html / docx / pdf text extraction; batch mode with nested
-directories (same-named files must not overwrite); and the no-OCR limitation for
+The stdlib-built fixtures (txt, csv, html, docx, pdf, png, directory tree) need no
+network. `sample.xlsx` and `sample.pptx` are generated through uv with
+`openpyxl` + `python-pptx`, because hand-rolled OOXML has to satisfy those
+readers exactly; if uv or the network is unavailable the two office evals are
+reported as SKIP rather than failed.
+
+Covers 9 evals: txt / csv / html / docx / pdf / xlsx / pptx text extraction; batch
+mode with nested directories (same-named files must not overwrite, hidden
+directories skipped, nothing leaked to stdout); and the no-OCR limitation for
 images, asserted as empty output so it fails loudly if that ever changes.
 
 ## When to Use This Skill
