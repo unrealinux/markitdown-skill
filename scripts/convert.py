@@ -397,6 +397,20 @@ def convert_one(args, uv_path, spec):
     return emit_text(args, result.stdout)
 
 
+def default_output_dir(input_dir):
+    """Default batch output directory: `<input>_markdown` next to the input.
+
+    A bare string concat turned `convert.py .` into a hidden `._markdown`, `..`
+    into `.._markdown`, and a filesystem root into `_markdown` in the current
+    directory. Those three fall back to ./markdown instead.
+    """
+    stripped = input_dir.rstrip("/\\")
+    if stripped in ("", ".", "..") or os.path.dirname(stripped) == stripped:
+        # dirname(x) == x only for a root such as "/" or "C:\\".
+        return os.path.join(os.getcwd(), "markdown")
+    return stripped + "_markdown"
+
+
 def collect_files(input_dir, recursive):
     """Split the tree into convertible files and skipped ones with a reason.
 
@@ -513,7 +527,7 @@ def report_skipped(skipped):
 def convert_batch(args, uv_path, spec):
     """Convert every supported file, mirroring the input tree into output_dir."""
     input_dir = args.input
-    output_dir = args.output_dir or (input_dir.rstrip("/\\") + "_markdown")
+    output_dir = args.output_dir or default_output_dir(input_dir)
 
     files, skipped = collect_files(input_dir, args.recursive)
     report_skipped(skipped)
@@ -618,7 +632,8 @@ def build_parser():
                         help="Recurse into subdirectories (directory mode)")
     parser.add_argument("--output-dir", metavar="DIR",
                         help="Output directory for directory mode "
-                             "(default: <input>_markdown)")
+                             "(default: <input>_markdown, or ./markdown "
+                             "for . and ..)")
     parser.add_argument("--extra", action="append", default=[], metavar="NAME",
                         help="Add a markitdown extra to the uv environment "
                              "(repeatable); use 'all' for every backend")

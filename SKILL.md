@@ -14,7 +14,7 @@ A universal document reader powered by [microsoft/markitdown](https://github.com
 |------|----------|
 | **Convert a file, URL or stdin** | `scripts/convert.py <file-or-url>` — Markdown to stdout; `-` reads stdin, `-x pdf` hints the format |
 | **Save to a file** | Add `-o output.md` |
-| **Batch convert folder** | `scripts/convert.py <folder> --output-dir <dir>` |
+| **Batch convert folder** | `scripts/convert.py <folder> --output-dir <dir>` (default: `<folder>_markdown`) |
 | **Include subfolders** | Add `--recursive` (output mirrors the input tree) |
 | **Machine-readable batch report** | Add `--json` (JSON on stdout, progress stays on stderr) |
 | **Reach another markitdown backend** | Add `--extra <name>`: `audio-transcription`, `outlook`, `az-doc-intel`, `az-content-understanding`, `all` |
@@ -180,9 +180,11 @@ python3 scripts/convert.py INPUT [-o OUTPUT] [--output-dir DIR] [--recursive]
     [-d -e ENDPOINT] [--use-cu --cu-endpoint ENDPOINT] [-p] [--keep-data-uris]
 ```
 
-Or set up an alias for convenience:
+Or set up an alias for convenience. The script runs uv itself, so the alias is
+just a path (`python3` on Unix, `py` on Windows):
+
 ```bash
-alias markitdown='~/.local/bin/uv run --with "markitdown[docx,xls,xlsx,pptx,pdf]" --python 3.12 python ~/.agents/skills/markitdown/scripts/convert.py'
+alias markitdown='python3 ~/.agents/skills/markitdown/scripts/convert.py'
 markitdown document.pdf -o output.md
 ```
 
@@ -240,7 +242,7 @@ network. `sample.xlsx` and `sample.pptx` are generated through uv with
 readers exactly; if uv or the network is unavailable the two office evals are
 reported as SKIP rather than failed.
 
-Covers 27 evals: txt / csv / html / docx / pdf / xlsx / pptx text extraction
+Covers 28 evals: txt / csv / html / docx / pdf / xlsx / pptx text extraction
 (the xlsx fixture has two sheets, so a first-sheet-only regression fails); a
 `.zip` that must come back auto-unpacked under `## File:`; batch mode with nested
 directories (same-named files must not overwrite, hidden directories skipped,
@@ -251,7 +253,8 @@ stdout stays empty; the no-OCR limitation for images, plus a silent WAV, both
 asserted as empty output **with** the stderr warning and exit code 0; a footnoted
 `.docx` that must render as `[[1]](#footnote-1)` + a trailing list and never as
 `[^1]`; a `data:` URI, stdin with `-x`, and the `--help` surface; `--json`
-batch output (counts per bucket); a `--style-map` run that must match the direct
+batch output (counts per bucket, plus the default `<input>_markdown` output
+directory); a `--style-map` run that must match the direct
 `MarkItDown(style_map=...)` output; and four source-level guards that fail the run
 when the wrapper drops `--python 3.12`, loses URI/`--extra`/skip-report support,
 or when the docs reintroduce a parameter markitdown does not have or a format

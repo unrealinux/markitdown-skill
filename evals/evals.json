@@ -313,6 +313,22 @@
       "min_chars": 20,
       "expect_stdout_contains": ["> Fixture Heading", "Fixture paragraph"],
       "expect_not_contains": ["# Fixture Heading"]
+    },
+    {
+      "id": 28,
+      "prompt": "不传 --output-dir 时的默认输出目录（<input>_markdown）",
+      "expected_output": "夹具先复制到临时目录，转换结果落在 tree_markdown/ 并镜像子目录",
+      "files": ["evals/fixtures/tree"],
+      "mode": "dir",
+      "recursive": true,
+      "copy_fixture": true,
+      "default_output_dir": true,
+      "expect_files": {
+        "top.md": "top level file",
+        "b/sub/deep.md": "deep note"
+      },
+      "expect_stderr_contains": ["already Markdown"],
+      "expect_stdout_empty": true
     }
   ]
 }

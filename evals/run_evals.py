@@ -112,8 +112,19 @@ def check_file_eval(spec, workdir):
 def check_dir_eval(spec, workdir):
     """Convert a fixture tree and check which files appear where."""
     source = os.path.join(SKILL_DIR, spec["files"][0])
+    if spec.get("copy_fixture"):
+        # Needed when the wrapper writes next to the input: the fixture tree in
+        # the repo must not collect a <name>_markdown directory.
+        copied = os.path.join(workdir, os.path.basename(source.rstrip("/\\")))
+        shutil.copytree(source, copied)
+        source = copied
+
     out_dir = os.path.join(workdir, f"eval-{spec['id']}")
-    args = [source, "--output-dir", out_dir] + list(spec.get("extra_args") or [])
+    if spec.get("default_output_dir"):
+        out_dir = source.rstrip("/\\") + "_markdown"
+        args = [source] + list(spec.get("extra_args") or [])
+    else:
+        args = [source, "--output-dir", out_dir] + list(spec.get("extra_args") or [])
     if spec.get("recursive"):
         args.append("--recursive")
 
