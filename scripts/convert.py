@@ -7,13 +7,23 @@ Requirements:
 - uv (install: https://astral.sh/uv)
 - Python 3.10+; this script prefers the 3.12 toolchain that uv manages
 
-Single file mode writes Markdown to stdout unless -o is given.
-Directory mode writes one .md per input file, mirroring subdirectories.
+Single input writes Markdown to stdout unless -o is given. The input may be a
+file, a URL (http:, https:, file:, data:), or "-" for stdin. Directory mode
+writes one .md per input file, mirroring subdirectories, and converts every file
+inside one interpreter.
+
+Single-file conversion is delegated to markitdown's own CLI, so every upstream
+flag (-x/-m/-c, -d, --use-cu, -p, --keep-data-uris, --list-plugins) behaves
+exactly as documented by markitdown. Directory mode cannot use that CLI (it has
+no batch mode), so it runs a small in-process loop instead, with the same
+constructor and conversion options forwarded through a JSON manifest.
 """
 
 import argparse
+import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -21,8 +31,16 @@ import tempfile
 
 # markitdown pulls its format support in as optional extras: the bare package
 # cannot read .docx, .xlsx, .pptx or .pdf and raises MissingDependencyException.
-# Azure-backed extras (az-doc-intel, audio-transcription, ...) stay out.
-MARKITDOWN_WITH = "markitdown[docx,xls,xlsx,pptx,pdf]"
+# These five cover the common office formats; anything else (outlook, audio,
+# az-doc-intel, az-content-understanding, all) is reachable with --extra.
+BASE_EXTRAS = ["docx", "xls", "xlsx", "pptx", "pdf"]
+DEFAULT_WITH = "markitdown[" + ",".join(BASE_EXTRAS) + "]"
+
+# Extras that exist in markitdown 0.1.8, for the --extra help text.
+KNOWN_EXTRAS = [
+    "all", "audio-transcription", "az-content-understanding", "az-doc-intel",
+    "docx", "outlook", "pdf", "pptx", "xls", "xlsx", "youtube-transcription",
+]
 
 # Always request 3.12 explicitly. Falling back to whatever interpreter uv prefers
 # is worse than failing: on 3.14 the extras have no ready wheels and the run
@@ -30,44 +48,61 @@ MARKITDOWN_WITH = "markitdown[docx,xls,xlsx,pptx,pdf]"
 # missing uv installs it, which takes about a minute.
 PYTHON_REQUEST = "3.12"
 
+# What markitdown 0.1.8 actually reads, taken from its converters' accepted
+# extension lists. .doc and .ppt are NOT here: no converter accepts them and
+# there is no LibreOffice/antiword path in the package, so they fail with
+# UnsupportedFormatException. .gif/.bmp/.webp are not here either — the image
+# converter accepts only .jpg/.jpeg/.png.
 SUPPORTED_EXTENSIONS = {
-    ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
-    ".html", ".htm", ".csv", ".txt", ".json", ".xml", ".zip",
-    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp",
-    ".mp3", ".wav", ".m4a",
+    ".pdf", ".docx", ".xlsx", ".xls", ".pptx", ".csv",
+    ".txt", ".text", ".json", ".jsonl", ".xml",
+    ".html", ".htm", ".ipynb", ".epub", ".msg", ".zip",
+    ".jpg", ".jpeg", ".png",
+    ".mp3", ".wav", ".m4a", ".mp4",
 }
 
-# Runs inside the uv-managed interpreter. The input path arrives through argv,
-# never interpolated into this source, so Windows backslash paths and paths
-# containing quotes cannot produce a SyntaxError.
-CONVERT_SNIPPET = (
-    "import sys\n"
-    "from markitdown import MarkItDown\n"
-    "try:\n"
-    "    result = MarkItDown().convert(sys.argv[1])\n"
-    "except Exception as exc:\n"
-    "    print(f'Error: {exc}', file=sys.stderr)\n"
-    "    sys.exit(1)\n"
-    "sys.stdout.write(getattr(result, 'text_content', str(result)))\n"
-)
+# Already Markdown: converting would be a byte-for-byte copy and, with
+# --output-dir pointing at the input, could overwrite the source. Directory mode
+# skips these and says so; single-file mode still converts if asked.
+ALREADY_MARKDOWN = {".md", ".markdown"}
+
+# URI schemes markitdown.convert() accepts. A Windows path like C:\x does not
+# match (single-letter scheme), and neither does a relative filename.
+URI_RE = re.compile(r"^(https?|file)://", re.IGNORECASE)
+DATA_URI_RE = re.compile(r"^data:", re.IGNORECASE)
 
 # Importing markitdown costs about five seconds, so batch mode converts every
 # file inside one interpreter instead of paying that cost per file. The child
-# reads a JSON manifest of {input, output} jobs and reports one JSON line per
-# job, which keeps the markdown itself out of the framed stdout stream.
+# reads a JSON manifest of {jobs, options} and reports one JSON line per job,
+# which keeps the markdown itself out of the framed stdout stream.
 BATCH_SNIPPET = (
     "import json\n"
     "import os\n"
     "import sys\n"
     "from markitdown import MarkItDown\n"
     "with open(sys.argv[1], encoding='utf-8') as handle:\n"
-    "    jobs = json.load(handle)['jobs']\n"
-    "converter = MarkItDown()\n"
+    "    manifest = json.load(handle)\n"
+    "jobs = manifest['jobs']\n"
+    "options = manifest.get('options') or {}\n"
+    "ctor = dict(options.get('ctor') or {})\n"
+    "if ctor.get('cu_file_types'):\n"
+    "    from markitdown.converters import ContentUnderstandingFileType\n"
+    "    ctor['cu_file_types'] = [ContentUnderstandingFileType(name)\n"
+    "                             for name in ctor['cu_file_types']]\n"
+    "stream_info = None\n"
+    "hints = options.get('stream_info') or {}\n"
+    "if hints:\n"
+    "    from markitdown._stream_info import StreamInfo\n"
+    "    stream_info = StreamInfo(**hints)\n"
+    "convert_kwargs = dict(options.get('convert') or {})\n"
+    "converter = MarkItDown(**ctor)\n"
     "for job in jobs:\n"
     "    record = {'input': job['input'], 'output': job['output'], 'ok': False,\n"
     "              'chars': 0, 'error': None}\n"
     "    try:\n"
-    "        text = getattr(converter.convert(job['input']), 'text_content', '')\n"
+    "        result = converter.convert(job['input'], stream_info=stream_info,\n"
+    "                                  **convert_kwargs)\n"
+    "        text = getattr(result, 'text_content', '') or ''\n"
     "        os.makedirs(os.path.dirname(os.path.abspath(job['output'])), exist_ok=True)\n"
     "        with open(job['output'], 'w', encoding='utf-8') as handle:\n"
     "            handle.write(text)\n"
@@ -76,6 +111,12 @@ BATCH_SNIPPET = (
     "    except Exception as exc:\n"
     "        record['error'] = f'{type(exc).__name__}: {exc}'\n"
     "    print(json.dumps(record, ensure_ascii=False), flush=True)\n"
+)
+
+EMPTY_OUTPUT_WARNING = (
+    "⚠️  Empty output: no extractable text. A scanned PDF or an image has no "
+    "text layer (markitdown ships no OCR engine); audio needs --extra "
+    "audio-transcription."
 )
 
 
@@ -118,7 +159,16 @@ def find_uv():
         "uv",
         "/usr/local/bin/uv",
         "/opt/homebrew/bin/uv",
-        os.path.join(os.environ.get("APPDATA", ""), "Python", "Python314", "Scripts", "uv.exe"),
+    ]
+    # The Windows install is under %APPDATA%\Python\Python3<minor>\, and the
+    # minor version changes with every Python release, so glob instead of
+    # hard-coding 314 (which silently broke uv discovery after an upgrade).
+    appdata_python = os.path.join(os.environ.get("APPDATA", ""), "Python")
+    candidates += sorted(
+        glob.glob(os.path.join(appdata_python, "Python3*", "Scripts", "uv.exe")),
+        reverse=True,
+    )
+    candidates += [
         os.path.expanduser("~/AppData/Roaming/Python/Python314/Scripts/uv.exe"),
         os.path.expanduser("~/.local/bin/uv.exe"),
     ]
@@ -128,23 +178,157 @@ def find_uv():
     return None
 
 
-def uv_command(uv_path, snippet=CONVERT_SNIPPET):
-    """Build the `uv run` command that performs one conversion."""
+def with_spec(extras):
+    """Build the markitdown requirement string for uv.
+
+    --extra all subsumes the rest, so asking for it alongside named extras must
+    not produce "markitdown[docx,...,all]".
+    """
+    names = list(BASE_EXTRAS) + [extra for extra in extras if extra]
+    if "all" in names:
+        return "markitdown[all]"
+    deduped = []
+    for name in names:
+        if name not in deduped:
+            deduped.append(name)
+    return "markitdown[" + ",".join(deduped) + "]"
+
+
+def uv_command(uv_path, spec, snippet):
+    """Build the `uv run` command that runs a python snippet."""
     return [
-        uv_path, "run", "--with", MARKITDOWN_WITH,
+        uv_path, "run", "--with", spec,
         "--python", PYTHON_REQUEST,
         "python", "-c", snippet,
     ]
 
 
-def convert_one(input_path, uv_path, output_path=None):
-    """Convert a single file.
+def cli_command(uv_path, spec):
+    """Build the `uv run` command for markitdown's own CLI."""
+    return [
+        uv_path, "run", "--with", spec,
+        "--python", PYTHON_REQUEST,
+        "markitdown",
+    ]
 
-    Returns the Markdown text on success, None on failure. With output_path the
-    Markdown goes to that file, otherwise to stdout.
+
+def is_uri(value):
+    """True for the URI schemes markitdown can fetch or decode itself."""
+    return bool(URI_RE.match(value) or DATA_URI_RE.match(value))
+
+
+def validate_options(args):
+    """The same requirement checks the upstream CLI makes, same wording.
+
+    Returns an error message, or None. Doing this before an interpreter starts
+    means a missing endpoint costs nothing instead of a download.
     """
-    print(f"📄 Converting: {input_path}", file=sys.stderr)
-    cmd = uv_command(uv_path) + [input_path]
+    if args.use_docintel and not args.endpoint:
+        return ("Document Intelligence Endpoint is required when using Document "
+                "Intelligence. Pass -e/--endpoint or set "
+                "MARKITDOWN_DOCINTEL_ENDPOINT.")
+    if args.use_cu and not args.cu_endpoint:
+        return ("Content Understanding Endpoint (--cu-endpoint) is required when "
+                "using --use-cu. Pass --cu-endpoint or set MARKITDOWN_CU_ENDPOINT.")
+    if args.mime_type and args.mime_type.count("/") != 1:
+        return f"Invalid MIME type: {args.mime_type}"
+    return None
+
+
+def cli_args(args):
+    """Forward the upstream-compatible flags to markitdown's CLI."""
+    forwarded = []
+    if args.extension:
+        forwarded += ["-x", args.extension]
+    if args.mime_type:
+        forwarded += ["-m", args.mime_type]
+    if args.charset:
+        forwarded += ["-c", args.charset]
+    if args.use_docintel:
+        forwarded += ["-d"]
+    if args.endpoint:
+        forwarded += ["-e", args.endpoint]
+    if args.use_cu:
+        forwarded += ["--use-cu"]
+    if args.cu_endpoint:
+        forwarded += ["--cu-endpoint", args.cu_endpoint]
+    if args.cu_analyzer:
+        forwarded += ["--cu-analyzer", args.cu_analyzer]
+    if args.cu_file_types:
+        forwarded += ["--cu-file-types", args.cu_file_types]
+    if args.use_plugins:
+        forwarded += ["-p"]
+    if args.keep_data_uris:
+        forwarded += ["--keep-data-uris"]
+    return forwarded
+
+
+def batch_options(args):
+    """Turn the flags into the ctor / convert / stream_info parts of a manifest."""
+    ctor = {}
+    if args.use_plugins:
+        ctor["enable_plugins"] = True
+    if args.use_docintel:
+        ctor["docintel_endpoint"] = args.endpoint
+    if args.use_cu:
+        ctor["cu_endpoint"] = args.cu_endpoint
+        if args.cu_analyzer:
+            ctor["cu_analyzer_id"] = args.cu_analyzer
+        if args.cu_file_types:
+            ctor["cu_file_types"] = [
+                name.strip().lower()
+                for name in args.cu_file_types.split(",")
+                if name.strip()
+            ]
+
+    convert_kwargs = {"keep_data_uris": True} if args.keep_data_uris else {}
+
+    stream_info = {}
+    if args.extension:
+        # markitdown compares extensions with the leading dot; the upstream CLI
+        # adds it for the user, so the batch path has to do the same.
+        stream_info["extension"] = (
+            args.extension if args.extension.startswith(".")
+            else "." + args.extension
+        )
+    if args.mime_type:
+        stream_info["mimetype"] = args.mime_type
+    if args.charset:
+        stream_info["charset"] = args.charset
+
+    return ctor, convert_kwargs, stream_info
+
+
+def report_failure(result):
+    """Print the tail of a failed child run.
+
+    Upstream's _exit_with_error() prints its message to stdout rather than
+    stderr, so both streams have to be inspected.
+    """
+    lines = [
+        line for line in ((result.stderr or "") + (result.stdout or "")).splitlines()
+        if line.strip()
+    ]
+    print("❌ Conversion failed:", file=sys.stderr)
+    for line in lines[-5:]:
+        print(f"   {line}", file=sys.stderr)
+
+
+def convert_one(args, uv_path, spec):
+    """Convert a single file, URL or stdin stream via markitdown's own CLI.
+
+    Returns the Markdown text on success, None on failure.
+    """
+    source = args.input
+    print(f"📄 Converting: {'stdin' if source == '-' else source}", file=sys.stderr)
+
+    cmd = cli_command(uv_path, spec) + cli_args(args)
+    if args.output:
+        parent = os.path.dirname(os.path.abspath(args.output))
+        os.makedirs(parent, exist_ok=True)
+        cmd += ["-o", args.output]
+    if source != "-":
+        cmd.append(source)
 
     try:
         result = subprocess.run(
@@ -156,52 +340,61 @@ def convert_one(input_path, uv_path, output_path=None):
         return None
 
     if result.returncode != 0:
-        lines = [line for line in (result.stderr or "").splitlines() if line.strip()]
-        print("❌ Conversion failed:", file=sys.stderr)
-        for line in lines[-5:]:
-            print(f"   {line}", file=sys.stderr)
+        report_failure(result)
         return None
 
-    text = result.stdout
-    if not text.strip():
-        print("⚠️  Empty output: no extractable text. A scanned PDF or an image "
-              "has no text layer (markitdown ships no OCR engine), and audio "
-              "needs the audio-transcription extra.", file=sys.stderr)
-    if output_path:
-        parent = os.path.dirname(os.path.abspath(output_path))
-        os.makedirs(parent, exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        print(f"✅ Saved to: {output_path} ({len(text)} chars)", file=sys.stderr)
+    if args.output:
+        try:
+            with open(args.output, encoding="utf-8") as handle:
+                text = handle.read()
+        except OSError as exc:
+            print(f"❌ Output file not readable: {exc}", file=sys.stderr)
+            return None
+        print(f"✅ Saved to: {args.output} ({len(text)} chars)", file=sys.stderr)
     else:
+        text = result.stdout
         sys.stdout.write(text)
         sys.stdout.flush()
+
+    if not text.strip():
+        print(EMPTY_OUTPUT_WARNING, file=sys.stderr)
     return text
 
 
 def collect_files(input_dir, recursive):
-    """List supported files under input_dir, sorted, skipping dot-directories."""
+    """Split the tree into convertible files and skipped ones with a reason.
+
+    Dot-directories are skipped: they hold tool state (.git, .venv), and the
+    evals assert nothing from them ends up in the output.
+    """
     found = []
+    skipped = []
     for root, dirs, names in os.walk(input_dir):
         dirs[:] = sorted(d for d in dirs if not d.startswith("."))
         if root == input_dir and not recursive:
             dirs[:] = []
         for name in sorted(names):
-            if os.path.splitext(name)[1].lower() in SUPPORTED_EXTENSIONS:
-                found.append(os.path.join(root, name))
-    return found
+            path = os.path.join(root, name)
+            extension = os.path.splitext(name)[1].lower()
+            if extension in SUPPORTED_EXTENSIONS:
+                found.append(path)
+            elif extension in ALREADY_MARKDOWN:
+                skipped.append((path, "already Markdown"))
+            else:
+                skipped.append((path, "unsupported extension"))
+    return found, skipped
 
 
-def run_batch_jobs(jobs, uv_path):
+def run_batch_jobs(jobs, uv_path, spec, options):
     """Convert every job in one interpreter. Returns one record per job."""
     manifest = tempfile.NamedTemporaryFile(
         "w", suffix=".json", delete=False, encoding="utf-8", prefix="markitdown-jobs-"
     )
     try:
-        json.dump({"jobs": jobs}, manifest, ensure_ascii=False)
+        json.dump({"jobs": jobs, "options": options}, manifest, ensure_ascii=False)
         manifest.close()
 
-        cmd = uv_command(uv_path, snippet=BATCH_SNIPPET) + [manifest.name]
+        cmd = uv_command(uv_path, spec, BATCH_SNIPPET) + [manifest.name]
         print(f"🚀 Converting {len(jobs)} files in one interpreter...", file=sys.stderr)
         try:
             result = subprocess.run(
@@ -266,9 +459,28 @@ def disambiguate_outputs(jobs):
                   f"{os.path.basename(job['output'])}", file=sys.stderr)
 
 
-def convert_batch(input_dir, output_dir, uv_path, recursive=False):
+def report_skipped(skipped):
+    """Say what was passed over and why, so a missing file is never a mystery."""
+    if not skipped:
+        return
+    by_reason = {}
+    for path, reason in skipped:
+        by_reason.setdefault(reason, []).append(path)
+    for reason, paths in by_reason.items():
+        print(f"⏭️  Skipped {len(paths)} file(s): {reason}", file=sys.stderr)
+        for path in paths[:5]:
+            print(f"   {path}", file=sys.stderr)
+        if len(paths) > 5:
+            print(f"   ... and {len(paths) - 5} more", file=sys.stderr)
+
+
+def convert_batch(args, uv_path, spec):
     """Convert every supported file, mirroring the input tree into output_dir."""
-    files = collect_files(input_dir, recursive)
+    input_dir = args.input
+    output_dir = args.output_dir or (input_dir.rstrip("/\\") + "_markdown")
+
+    files, skipped = collect_files(input_dir, args.recursive)
+    report_skipped(skipped)
     if not files:
         print(f"❌ No supported files found in {input_dir}", file=sys.stderr)
         return 1
@@ -283,7 +495,9 @@ def convert_batch(input_dir, output_dir, uv_path, recursive=False):
         })
 
     disambiguate_outputs(jobs)
-    results = run_batch_jobs(jobs, uv_path)
+    ctor, convert_kwargs, stream_info = batch_options(args)
+    options = {"ctor": ctor, "convert": convert_kwargs, "stream_info": stream_info}
+    results = run_batch_jobs(jobs, uv_path, spec, options)
 
     converted = 0
     empty = []
@@ -317,49 +531,162 @@ def convert_batch(input_dir, output_dir, uv_path, recursive=False):
     summary = f"📦 Batch finished: {converted} converted, {len(failed)} failed"
     if empty:
         summary += f", {len(empty)} empty"
+    if skipped:
+        summary += f", {len(skipped)} skipped"
     print(summary, file=sys.stderr)
+
+    if args.json:
+        # Machine-readable summary on stdout; progress stays on stderr, so
+        # `convert.py docs --output-dir out --json > summary.json` works.
+        payload = {
+            "input": input_dir,
+            "output_dir": output_dir,
+            "converted": [
+                {"input": job["input"], "output": job["output"],
+                 "chars": (record or {}).get("chars", 0)}
+                for job, record in zip(jobs, results)
+                if record and record.get("ok") and (record.get("chars") or 0)
+            ],
+            "empty": [
+                {"input": job["input"], "output": job["output"]}
+                for job, record in zip(jobs, results)
+                if record and record.get("ok") and not (record.get("chars") or 0)
+            ],
+            "failed": [
+                {"input": job["input"],
+                 "error": (record or {}).get("error") or "no result"}
+                for job, record in zip(jobs, results)
+                if not (record and record.get("ok"))
+            ],
+            "skipped": [{"input": path, "reason": reason} for path, reason in skipped],
+        }
+        sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+        sys.stdout.flush()
+
     return 1 if failed else 0
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(
-        description="Convert documents to Markdown using markitdown"
+        description="Convert documents to Markdown using markitdown "
+                    "(files, URLs, stdin, or a whole directory)",
+        epilog="Extras available: " + ", ".join(KNOWN_EXTRAS),
     )
-    parser.add_argument("input", help="Input file or directory")
-    parser.add_argument("-o", "--output",
-                        help="Output file path. Single file mode prints to stdout when omitted")
+    parser.add_argument(
+        "input", nargs="?", default="-",
+        help="Input file, directory, URL (http:/https:/file:/data:) or - for "
+             "stdin (default: -)")
+
+    # Wrapper-only options.
     parser.add_argument("--recursive", action="store_true",
                         help="Recurse into subdirectories (directory mode)")
     parser.add_argument("--output-dir", metavar="DIR",
-                        help="Output directory for directory mode (default: <input>_markdown)")
-    args = parser.parse_args()
+                        help="Output directory for directory mode "
+                             "(default: <input>_markdown)")
+    parser.add_argument("--extra", action="append", default=[], metavar="NAME",
+                        help="Add a markitdown extra to the uv environment "
+                             "(repeatable); use 'all' for every backend")
+    parser.add_argument("--json", action="store_true",
+                        help="Directory mode: print a JSON summary to stdout")
 
+    # Same names as markitdown's own CLI, forwarded verbatim in single mode.
+    parser.add_argument("-o", "--output",
+                        help="Output file path. Single input mode prints to "
+                             "stdout when omitted")
+    parser.add_argument("-x", "--extension",
+                        help="Hint about the file extension (needed for stdin)")
+    parser.add_argument("-m", "--mime-type", help="Hint about the MIME type")
+    parser.add_argument("-c", "--charset", help="Hint about the charset")
+    parser.add_argument("-d", "--use-docintel", action="store_true",
+                        help="Use Azure Document Intelligence "
+                             "(needs --extra az-doc-intel)")
+    parser.add_argument("-e", "--endpoint",
+                        default=os.environ.get("MARKITDOWN_DOCINTEL_ENDPOINT") or None,
+                        help="Document Intelligence endpoint "
+                             "(default: MARKITDOWN_DOCINTEL_ENDPOINT)")
+    parser.add_argument("--use-cu", "--use-content-understanding",
+                        action="store_true", dest="use_cu",
+                        help="Use Azure Content Understanding "
+                             "(needs --extra az-content-understanding)")
+    parser.add_argument("--cu-endpoint",
+                        default=os.environ.get("MARKITDOWN_CU_ENDPOINT") or None,
+                        help="Content Understanding endpoint "
+                             "(default: MARKITDOWN_CU_ENDPOINT)")
+    parser.add_argument("--cu-analyzer", help="Content Understanding analyzer ID")
+    parser.add_argument("--cu-file-types",
+                        help="Comma-separated file types routed to Content "
+                             "Understanding (e.g. pdf,jpeg,mp4)")
+    parser.add_argument("-p", "--use-plugins", action="store_true",
+                        help="Use 3rd-party markitdown plugins")
+    parser.add_argument("--list-plugins", action="store_true",
+                        help="List installed 3rd-party plugins and exit")
+    parser.add_argument("--keep-data-uris", action="store_true",
+                        help="Keep base64 data URIs (images) in the output "
+                             "instead of truncating them")
+    return parser
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
     force_utf8_stdout()
 
-    if not os.path.exists(args.input):
-        print(f"Error: input not found: {args.input}", file=sys.stderr)
+    problem = validate_options(args)
+    if problem:
+        print(f"Error: {problem}", file=sys.stderr)
         sys.exit(1)
 
     uv_path = find_uv()
     if not uv_path:
         print("Error: uv not found. Install it first:", file=sys.stderr)
         print("  curl -LsSf https://astral.sh/uv/install.sh | sh", file=sys.stderr)
-        print("  Windows: uv is expected at %APPDATA%\\Python\\Python314\\Scripts\\uv.exe", file=sys.stderr)
+        print("  Windows: uv lives under %APPDATA%\\Python\\Python3xx\\Scripts\\uv.exe",
+              file=sys.stderr)
         sys.exit(1)
 
-    if os.path.isdir(args.input):
+    spec = with_spec(args.extra)
+
+    if args.list_plugins:
+        # markitdown prints the plugin list itself; forward its exit code.
+        result = subprocess.run(
+            cli_command(uv_path, spec) + ["--list-plugins"], env=child_env()
+        )
+        sys.exit(result.returncode)
+
+    is_stdin = args.input == "-"
+    is_dir = not is_stdin and os.path.isdir(args.input)
+    is_url = not is_stdin and is_uri(args.input)
+
+    if not is_stdin and not is_dir and not is_url and not os.path.exists(args.input):
+        print(f"Error: input not found: {args.input}", file=sys.stderr)
+        sys.exit(1)
+
+    if is_dir:
         if args.output:
             print("Error: -o applies to single files; use --output-dir for directories",
                   file=sys.stderr)
             sys.exit(1)
-        output_dir = args.output_dir or (args.input.rstrip("/\\") + "_markdown")
-        sys.exit(convert_batch(args.input, output_dir, uv_path, args.recursive))
+        sys.exit(convert_batch(args, uv_path, spec))
 
+    if args.output_dir:
+        print("Error: --output-dir applies to directories", file=sys.stderr)
+        sys.exit(1)
+    if args.recursive:
+        print("Error: --recursive applies to directories", file=sys.stderr)
+        sys.exit(1)
+    if args.json:
+        print("Error: --json applies to directory mode", file=sys.stderr)
+        sys.exit(1)
     if args.output and os.path.isdir(args.output):
         print(f"Error: {args.output} is a directory; use --output-dir", file=sys.stderr)
         sys.exit(1)
+    if is_stdin and not (args.extension or args.mime_type):
+        # markitdown may still sniff the content, but a bare pipe usually is not
+        # enough to pick a converter, so say what to add before it fails.
+        print("Note: reading stdin; pass -x/--extension (e.g. -x pdf) if the "
+              "format cannot be sniffed.", file=sys.stderr)
 
-    text = convert_one(args.input, uv_path, args.output)
+    text = convert_one(args, uv_path, spec)
     sys.exit(0 if text is not None else 1)
 
 

@@ -36,7 +36,7 @@ This reference contains format-specific behavior, limitations, and tips for mark
 - markitdown cannot decrypt PDFs
 - **Workaround**: Remove password externally first, then convert
 
-## Word Documents (.docx / .doc)
+## Word Documents (.docx)
 
 ### .docx (Modern)
 - Excellent support: headings, tables, images, lists all preserved
@@ -50,13 +50,13 @@ This reference contains format-specific behavior, limitations, and tips for mark
   MarkItDown().convert("file.docx", style_map="p[style-name='Quote'] => blockquote")
   ```
 
-### .doc (Legacy)
-- Converted via LibreOffice or antiword backend
-- Complex formatting may be lost
-- **Tip**: Convert to .docx first for best results:
-  ```bash
-  soffice --headless --convert-to docx input.doc
-  ```
+### .doc (Legacy) — not supported
+- There is **no LibreOffice path** in markitdown 0.1.8 (no office-conversion
+  helper, no converter that accepts `.doc`), so a legacy `.doc` raises
+  `UnsupportedFormatException`. Verified with a real OLE-format `.doc`.
+- **Fix at the source**: re-save the file as `.docx` in Word or LibreOffice and
+  convert that. Directory mode reports `.doc` files as `unsupported extension`
+  rather than failing the batch.
 
 ### Special Elements
 - **Footnotes**: rendered as an inline reference plus a list at the end, not as
@@ -86,7 +86,7 @@ This reference contains format-specific behavior, limitations, and tips for mark
 - Charts are NOT extracted as images
 - Chart data tables may appear in the markdown
 
-## PowerPoint (.pptx / .ppt)
+## PowerPoint (.pptx)
 
 ### Slide Structure
 - Each slide starts with an HTML comment, not a heading:
@@ -102,10 +102,15 @@ This reference contains format-specific behavior, limitations, and tips for mark
 - Tables: Converted to markdown tables
 
 ### Legacy .ppt
-- Requires LibreOffice conversion first
-- May lose animations and transitions (irrelevant for text extraction)
+- Not supported: the pptx converter accepts `.pptx` only, and there is **no
+  LibreOffice path** in the package. Re-save as `.pptx` first.
+- May lose animations and transitions on that re-save (irrelevant for text extraction)
 
-## Images (JPG, PNG, GIF, BMP, WEBP)
+## Images (JPG, PNG)
+
+`.jpg`, `.jpeg` and `.png` are the only extensions the image converter accepts
+(`ACCEPTED_FILE_EXTENSIONS` in `_image_converter.py`). Anything else is rejected
+before metadata is even read.
 
 ### No OCR
 - markitdown extracts image **metadata (EXIF)**, not text. An image containing a
@@ -153,8 +158,12 @@ uv run --with "markitdown[audio-transcription]" markitdown meeting.mp3
 - Background music/noise reduces accuracy
 - Multiple speakers: Basic separation only
 - Long files may exceed the free Web Speech quota (video is limited to ~1 minute)
-- **Not reachable through this wrapper**, which installs no audio extra and
-  exposes no transcription options; use markitdown directly.
+- **Reachable through this wrapper** with `--extra audio-transcription`:
+  ```bash
+  python3 scripts/convert.py meeting.mp3 --extra audio-transcription
+  ```
+  Without the extra the converter's `MissingDependencyException` is swallowed, so
+  the file converts to empty output with exit code 0 instead of erroring.
 
 ## CSV and Plain Text
 
@@ -201,9 +210,11 @@ uv run --with "markitdown[audio-transcription]" markitdown meeting.mp3
 
 ## Advanced Backends (markitdown 0.1.8)
 
-All of these need `markitdown[all]` (or the specific extra) and are **not**
-exposed by this skill's wrapper, which installs only
-`markitdown[docx,xls,xlsx,pptx,pdf]`.
+All of these need `markitdown[all]` (or the specific extra). The wrapper starts
+with `markitdown[docx,xls,xlsx,pptx,pdf]` and adds whatever `--extra NAME` asks
+for, so most of them are one flag away; only constructor kwargs the wrapper does
+not expose (`llm_client`, `llm_model`, `style_map`, `exiftool_path`) still need a
+direct Python call.
 
 ### Images via a vision model
 

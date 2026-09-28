@@ -317,12 +317,17 @@ def main():
         ("b/report.txt", "B report\n"),
         ("b/sub/deep.txt", "deep note\n"),
         (".hidden/skipme.txt", "hidden file should be skipped\n"),
-        ("notes.md", "markdown is not an input extension\n"),
+        ("notes.md", "markdown is not converted in directory mode\n"),
     ]:
         target = os.path.join(tree, relative)
         os.makedirs(os.path.dirname(target), exist_ok=True)
         with open(target, "w", encoding="utf-8") as handle:
             handle.write(text)
+
+    # A legacy .doc: markitdown 0.1.8 has no converter for it and no LibreOffice
+    # path, so directory mode must report it as skipped instead of failing.
+    with open(os.path.join(tree, "legacy.doc"), "wb") as handle:
+        handle.write(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + bytes(range(256)) * 4)
 
     # Failure path: one readable file next to a .docx whose XML is garbage.
     broken = os.path.join(FIXTURES, "broken")

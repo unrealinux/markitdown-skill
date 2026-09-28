@@ -43,13 +43,20 @@ def setup_stdio():
         GREEN = RED = YELLOW = DIM = RESET = ""
 
 
-def run_convert(args):
+def run_convert(args, stdin_bytes=None):
     """Run the wrapper, returning (exit_code, stdout, stderr)."""
+    # stdin stays bytes (a PDF piped into `- -x pdf` is not text), so the streams
+    # are decoded here instead of letting subprocess do it via encoding=.
     process = subprocess.run(
         [sys.executable, CONVERT, *args],
-        capture_output=True, encoding="utf-8", errors="replace",
+        input=stdin_bytes,
+        capture_output=True,
     )
-    return process.returncode, process.stdout, process.stderr
+    return (
+        process.returncode,
+        process.stdout.decode("utf-8", "replace"),
+        process.stderr.decode("utf-8", "replace"),
+    )
 
 
 def check_file_eval(spec, workdir):
@@ -106,7 +113,7 @@ def check_dir_eval(spec, workdir):
     """Convert a fixture tree and check which files appear where."""
     source = os.path.join(SKILL_DIR, spec["files"][0])
     out_dir = os.path.join(workdir, f"eval-{spec['id']}")
-    args = [source, "--output-dir", out_dir]
+    args = [source, "--output-dir", out_dir] + list(spec.get("extra_args") or [])
     if spec.get("recursive"):
         args.append("--recursive")
 
@@ -134,8 +141,59 @@ def check_dir_eval(spec, workdir):
         if os.path.exists(os.path.join(out_dir, relative)):
             problems.append(f"file should not have been written: {relative}")
 
-    if spec.get("expect_stdout_empty") and out.strip():
+    if spec.get("expect_json"):
+        try:
+            payload = json.loads(out)
+        except json.JSONDecodeError as exc:
+            problems.append(f"stdout is not JSON: {exc}")
+            payload = {}
+        for key in (spec["expect_json"].get("keys") or []):
+            if key not in payload:
+                problems.append(f"json summary is missing key: {key}")
+        for key, expected in (spec["expect_json"].get("counts") or {}).items():
+            actual = len(payload.get(key) or [])
+            if actual != expected:
+                problems.append(f"json {key}: {actual} entries, expected {expected}")
+        for key, needle in (spec["expect_json"].get("mentions") or {}).items():
+            blob = json.dumps(payload.get(key), ensure_ascii=False)
+            if needle not in blob:
+                problems.append(f"json {key} does not mention {needle!r}")
+    elif spec.get("expect_stdout_empty") and out.strip():
         problems.append(f"directory mode leaked {len(out.strip())} chars to stdout")
+
+    return problems, out
+
+
+def check_cli_eval(spec, workdir):
+    """Run the wrapper with literal arguments: URIs, stdin and --help."""
+    args = [arg.replace("{skill}", SKILL_DIR) for arg in spec["args"]]
+    stdin_bytes = None
+    if spec.get("stdin_file"):
+        with open(os.path.join(SKILL_DIR, spec["stdin_file"]), "rb") as handle:
+            stdin_bytes = handle.read()
+
+    code, out, err = run_convert(args, stdin_bytes=stdin_bytes)
+    problems = []
+    expected_code = spec.get("expect_exit_code", 0)
+    if code != expected_code:
+        last = err.strip().splitlines()[-1] if err.strip() else "no stderr"
+        problems.append(f"exit code {code}, expected {expected_code}: {last}")
+
+    for needle in spec.get("expect_stdout_contains", []):
+        if needle not in out:
+            problems.append(f"stdout missing: {needle!r}")
+    for needle in spec.get("expect_stderr_contains", []):
+        if needle not in err:
+            problems.append(f"stderr missing: {needle!r}")
+    for needle in spec.get("expect_not_contains", []):
+        if needle in out:
+            problems.append(f"unexpected stdout text: {needle!r}")
+
+    length = len(out.strip())
+    if length < spec.get("min_chars", 0):
+        problems.append(f"stdout too short: {length} chars < {spec['min_chars']}")
+    if "max_chars" in spec and length > spec["max_chars"]:
+        problems.append(f"stdout too long: {length} chars > {spec['max_chars']}")
 
     return problems, out
 
@@ -185,6 +243,8 @@ def main():
 
             if spec.get("mode") == "source":
                 problems, output = check_source_eval(spec)
+            elif spec.get("mode") == "cli":
+                problems, output = check_cli_eval(spec, workdir)
             elif spec.get("mode") == "dir":
                 problems, output = check_dir_eval(spec, workdir)
             else:

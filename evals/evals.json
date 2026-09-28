@@ -56,7 +56,7 @@
     {
       "id": 6,
       "prompt": "把 evals/fixtures/tree 文件夹里所有文档都转成 Markdown，包括子目录",
-      "expected_output": "4 个 txt 被转换，输出镜像子目录结构，隐藏目录被跳过",
+      "expected_output": "4 个 txt 被转换，输出镜像子目录结构，隐藏目录被跳过；notes.md 作为已 Markdown 跳过、legacy.doc 作为不支持的扩展名跳过，都要在 stderr 里说明",
       "files": ["evals/fixtures/tree"],
       "mode": "dir",
       "recursive": true,
@@ -66,7 +66,8 @@
         "b/report.md": "B report",
         "b/sub/deep.md": "deep note"
       },
-      "expect_absent_files": ["skipme.md", "notes.md", ".hidden/skipme.md"],
+      "expect_absent_files": ["skipme.md", "notes.md", ".hidden/skipme.md", "legacy.md"],
+      "expect_stderr_contains": ["already Markdown", "unsupported extension", "legacy.doc"],
       "expect_stdout_empty": true
     },
     {
@@ -232,6 +233,76 @@
       "min_chars": 20,
       "expect_contains": ["[[1]](#footnote-1)", "FOOTNOTE-MARKER-TEXT", "[↑](#footnote-ref-1)"],
       "expect_not_contains": ["[^1]"]
+    },
+    {
+      "id": 20,
+      "prompt": "把 data:text/plain;base64,aGVsbG8gd29ybGQ= 转成 Markdown",
+      "expected_output": "URL 形式的输入不再被 os.path.exists() 拦下（markitdown 原生支持 http:/https:/file:/data:）",
+      "mode": "cli",
+      "args": ["data:text/plain;base64,aGVsbG8gd29ybGQ="],
+      "min_chars": 5,
+      "expect_stdout_contains": ["hello world"],
+      "expect_not_contains": ["input not found"]
+    },
+    {
+      "id": 21,
+      "prompt": "cat evals/fixtures/sample.txt | convert.py - -x txt",
+      "expected_output": "stdin 也能转，-x 提供扩展名提示，中文和 emoji 不丢",
+      "mode": "cli",
+      "args": ["-", "-x", "txt"],
+      "stdin_file": "evals/fixtures/sample.txt",
+      "min_chars": 20,
+      "expect_stdout_contains": ["中文测试", "😀", "→"]
+    },
+    {
+      "id": 22,
+      "prompt": "convert.py --help 要能看到上游 CLI 的能力开关",
+      "expected_output": "--extra / -x / -m / -c / -d / --use-cu / -p / --keep-data-uris / --list-plugins / --json 一个不少",
+      "mode": "cli",
+      "args": ["--help"],
+      "min_chars": 500,
+      "expect_stdout_contains": ["--extension", "--mime-type", "--charset", "--use-docintel", "--use-cu", "--use-plugins", "--list-plugins", "--keep-data-uris", "--extra", "--json", "--output-dir"]
+    },
+    {
+      "id": 23,
+      "prompt": "convert.py <pdf> -d 但没给 endpoint",
+      "expected_output": "和上游 CLI 同样的报错、退出码 1，而且不启动解释器（拿不到错误再跑一次）",
+      "mode": "cli",
+      "args": ["{skill}/evals/fixtures/sample.pdf", "-d"],
+      "expect_exit_code": 1,
+      "expect_stderr_contains": ["Document Intelligence Endpoint is required"],
+      "expect_not_contains": ["PDF fixture text"]
+    },
+    {
+      "id": 24,
+      "prompt": "批量转换加 --json，要看机器可读汇总",
+      "expected_output": "stdout 是 JSON，converted/empty/failed/skipped 计数正确，empty 里点得到 scan.md",
+      "files": ["evals/fixtures/scan"],
+      "mode": "dir",
+      "extra_args": ["--json"],
+      "expect_json": {
+        "keys": ["input", "output_dir", "converted", "empty", "failed", "skipped"],
+        "counts": {"converted": 1, "empty": 1, "failed": 0, "skipped": 0},
+        "mentions": {"empty": "scan.md"}
+      }
+    },
+    {
+      "id": 25,
+      "prompt": "包装脚本必须保留 URL / stdin / --extra / 跳过报告的实现",
+      "expected_output": "URI 识别、--extra 合成 markitdown[...]（all 覆盖其余）、已 Markdown 单独归类、.doc/.ppt 不假装支持",
+      "files": ["scripts/convert.py"],
+      "mode": "source",
+      "expect_contains": ["def with_spec", "if \"all\" in names", "def is_uri", "ALREADY_MARKDOWN", "def report_skipped", ".doc and .ppt are NOT here"],
+      "expect_not_contains": ["MARKITDOWN_WITH", "find_python"]
+    },
+    {
+      "id": 26,
+      "prompt": "文档不能再声称 .doc/.ppt 走 LibreOffice，也不能把 gif/bmp/webp 列成支持格式",
+      "expected_output": "两份文档都写明 no LibreOffice path，并且不再出现 antiword/soffice 以及拿不到支持的图片格式",
+      "files": ["SKILL.md", "references/formats.md"],
+      "mode": "source",
+      "expect_contains": ["no LibreOffice path"],
+      "expect_not_contains": ["antiword", "soffice", "gif", "bmp", "webp"]
     }
   ]
 }

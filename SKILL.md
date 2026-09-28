@@ -12,12 +12,18 @@ A universal document reader powered by [microsoft/markitdown](https://github.com
 
 | Task | Approach |
 |------|----------|
-| **Convert single file** | `scripts/convert.py <file>` — Markdown goes to stdout |
+| **Convert a file, URL or stdin** | `scripts/convert.py <file-or-url>` — Markdown to stdout; `-` reads stdin, `-x pdf` hints the format |
 | **Save to a file** | Add `-o output.md` |
 | **Batch convert folder** | `scripts/convert.py <folder> --output-dir <dir>` |
 | **Include subfolders** | Add `--recursive` (output mirrors the input tree) |
+| **Machine-readable batch report** | Add `--json` (JSON on stdout, progress stays on stderr) |
+| **Reach another markitdown backend** | Add `--extra <name>`: `audio-transcription`, `outlook`, `az-doc-intel`, `az-content-understanding`, `all` |
+| **Azure Document Intelligence** | `--use-docintel -e <endpoint>` plus `--extra az-doc-intel` |
+| **Azure Content Understanding** | `--use-cu --cu-endpoint <endpoint>` plus `--extra az-content-understanding` |
+| **Third-party plugins** | `-p`, or `--list-plugins` to see what is installed |
+| **Keep base64 images** | `--keep-data-uris` (the default truncates data URIs) |
 
-**Not provided by this wrapper:** OCR, CSV table export, image extraction. markitdown ships no OCR engine — scanned PDFs and pictures of text come back empty. See [Limitations](#limitations).
+**Not provided:** OCR and CSV export. markitdown ships no OCR engine — scanned PDFs and pictures of text come back empty. See [Limitations](#limitations).
 
 ## Prerequisites
 
@@ -54,6 +60,38 @@ python3 <skill_dir>/scripts/convert.py document.pdf
 python3 <skill_dir>/scripts/convert.py document.docx -o output.md
 ```
 
+### URL, stdin and streaming
+
+`http:`, `https:`, `file:` and `data:` inputs are passed to markitdown as-is;
+it fetches or decodes them itself.
+
+```bash
+python3 <skill_dir>/scripts/convert.py https://example.com/report.pdf
+python3 <skill_dir>/scripts/convert.py "data:text/plain;base64,aGVsbG8="
+
+# stdin: '-' plus a format hint when the content cannot be sniffed
+cat report.pdf | python3 <skill_dir>/scripts/convert.py - -x pdf
+```
+
+### Other backends (`--extra`)
+
+Each of these adds one markitdown extra to the uv environment for that run:
+
+```bash
+# Audio transcription (speech_recognition + pydub; ffmpeg on PATH for mp3/mp4)
+python3 <skill_dir>/scripts/convert.py meeting.mp3 --extra audio-transcription
+
+# Outlook .msg
+python3 <skill_dir>/scripts/convert.py mail.msg --extra outlook
+
+# Azure Document Intelligence / Content Understanding
+python3 <skill_dir>/scripts/convert.py scan.pdf --extra az-doc-intel -d -e "$MARKITDOWN_DOCINTEL_ENDPOINT"
+python3 <skill_dir>/scripts/convert.py scan.pdf --extra az-content-understanding --use-cu --cu-endpoint "$MARKITDOWN_CU_ENDPOINT"
+
+# Every backend at once (large download; only the first run pays it)
+python3 <skill_dir>/scripts/convert.py scan.pdf --extra all
+```
+
 ### Batch conversion
 
 ```bash
@@ -69,6 +107,9 @@ Batch mode converts every file inside **one** interpreter, because importing
 markitdown costs about 5 seconds on its own. Measured on this machine: 4 files
 went from 21.9s to 6.0s, and 101 files finish in ~9s. A failed file is reported on
 its own line while the rest still convert; the exit code is 1 if any file failed.
+Files that directory mode will not convert are listed first, with the reason
+(`unsupported extension`, `already Markdown`). `--json` prints the same summary
+as JSON on stdout instead of only human-readable stderr lines.
 
 Single-file mode cannot avoid that import, so expect ~6-9 seconds even for a tiny
 file. That delay is normal — do not kill the process and retry.
@@ -86,10 +127,18 @@ file. That delay is normal — do not kill the process and retry.
 - **No CSV export.** Spreadsheets and tables come back as Markdown tables. Use
   `pandas` or `openpyxl` directly when you need CSV.
 - **No image extraction.** Images inside documents are referenced, not written to disk.
-- **No audio transcription.** It needs the `audio-transcription` extra
-  (`speech_recognition` + `pydub` + ffmpeg) and the wrapper does not install it.
-- **`.doc` / `.ppt`** go through LibreOffice; install it or convert to `.docx` /
-  `.pptx` first.
+- **No audio transcription by default.** `.mp3` / `.wav` / `.m4a` / `.mp4` return
+  metadata only (usually nothing) unless you add `--extra audio-transcription`.
+  The missing dependency is swallowed, so without the extra you get empty output
+  and exit code 0 rather than an error.
+- **`.doc` / `.ppt` are not supported.** markitdown 0.1.8 has no converter for
+  them and **no LibreOffice path** — they raise `UnsupportedFormatException`.
+  Convert to `.docx` / `.pptx` first. Directory mode lists them as skipped.
+- **Images are `.jpg` / `.jpeg` / `.png` only.** Those three are the extensions
+  the image converter accepts; other image formats are not read at all.
+- **`.md` / `.markdown` are skipped in directory mode.** Converting them would be
+  a byte-for-byte copy, and with `--output-dir` pointing at the input it could
+  overwrite the source. Single-file mode still converts them on request.
 - **Empty output is not an error.** A scanned page, an image, or audio without
   the transcription extra converts to zero characters with exit code 0.
   Single-file mode says so on stderr; batch mode prints `⚠️ ... (0 chars ...)`
@@ -101,20 +150,25 @@ See `references/formats.md` for detailed format-specific notes.
 
 | Category | Formats | Notes |
 |----------|---------|-------|
-| Documents | `.pdf`, `.docx`, `.doc` | PDF needs a text layer (no OCR) |
-| Spreadsheets | `.xlsx`, `.xls`, `.csv` | All sheets' tables as Markdown tables |
-| Presentations | `.pptx`, `.ppt` | Slides converted to ordered Markdown |
-| Images | `.jpg`, `.png`, `.gif`, `.bmp`, `.webp` | Metadata only — **no OCR**, text in images is lost |
-| Web | `.html`, `.htm` | Stripped of scripts/styles |
-| Archives | `.zip` (with documents) | Extracts and converts contained files |
-| Audio | `.mp3`, `.wav`, `.m4a` | Metadata only here — the `audio-transcription` extra is not installed, and the missing dependency is swallowed, so audio returns empty output with exit code 0 |
+| Documents | `.pdf`, `.docx` | PDF needs a text layer (no OCR) |
+| Spreadsheets | `.xlsx`, `.xls`, `.csv` | Every sheet becomes a Markdown table |
+| Presentations | `.pptx` | Each slide marked with `<!-- Slide number: N -->` |
+| Web / text | `.html`, `.htm`, `.txt`, `.text`, `.json`, `.jsonl`, `.xml` | Scripts and styles stripped; `text/*` passes through |
+| Notebooks / books / mail | `.ipynb`, `.epub`, `.msg` | `.msg` needs `--extra outlook` |
+| Images | `.jpg`, `.jpeg`, `.png` | Metadata only — **no OCR**, text in images is lost |
+| Audio / video | `.mp3`, `.wav`, `.m4a`, `.mp4` | Metadata only unless `--extra audio-transcription` |
+| Archives | `.zip` | Auto-unpacked, each entry under `## File:` |
+| Not supported | `.doc`, `.ppt` | no LibreOffice path; raises `UnsupportedFormatException` |
 
 ## Script Reference
 
-The bundled script at `scripts/convert.py` wraps markitdown with sensible defaults:
+The bundled script at `scripts/convert.py` wraps markitdown, and does its own
+`uv run`, so there is no need to launch it through uv:
 
 ```bash
-~/.local/bin/uv run --with "markitdown[docx,xls,xlsx,pptx,pdf]" --python 3.12 python scripts/convert.py INPUT [-o OUTPUT] [--recursive] [--output-dir DIR]
+python3 scripts/convert.py INPUT [-o OUTPUT] [--output-dir DIR] [--recursive]
+    [--json] [--extra NAME]... [-x EXT] [-m MIME] [-c CHARSET]
+    [-d -e ENDPOINT] [--use-cu --cu-endpoint ENDPOINT] [-p] [--keep-data-uris]
 ```
 
 Or set up an alias for convenience:
@@ -129,7 +183,7 @@ Common issues and fixes:
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `uv not found` | uv missing or not on PATH | Install uv; on Windows it lives at `%APPDATA%\Python\Python314\Scripts\uv.exe` |
+| `uv not found` | uv missing or not on PATH | Install uv; on Windows it lives under `%APPDATA%\Python\Python3xx\Scripts\uv.exe` |
 | `MissingDependencyException` (`markitdown[docx]` hint) | markitdown installed without format extras | The wrapper pins `markitdown[docx,xls,xlsx,pptx,pdf]`; a bare `pip install markitdown` cannot read Office files or PDFs |
 | `Conversion failed: UnsupportedFormatException` | File type markitdown cannot read | Convert to PDF or `.docx` first |
 | Blank output from PDF | Scanned PDF without a text layer | OCR it first — this wrapper has no OCR |
@@ -177,25 +231,27 @@ network. `sample.xlsx` and `sample.pptx` are generated through uv with
 readers exactly; if uv or the network is unavailable the two office evals are
 reported as SKIP rather than failed.
 
-Covers 19 evals: txt / csv / html / docx / pdf / xlsx / pptx text extraction
+Covers 26 evals: txt / csv / html / docx / pdf / xlsx / pptx text extraction
 (the xlsx fixture has two sheets, so a first-sheet-only regression fails); a
 `.zip` that must come back auto-unpacked under `## File:`; batch mode with nested
 directories (same-named files must not overwrite, hidden directories skipped,
-nothing leaked to stdout); a directory holding one corrupt `.docx` (the good file
-must still convert, the bad one must not be written, exit code 1, root cause in
-stderr); `-o` writing a file while stdout stays empty; the no-OCR limitation for
-images, plus a silent WAV, both asserted as empty output **with** the stderr
-warning and exit code 0; a footnoted `.docx` that must render as
-`[[1]](#footnote-1)` + a trailing list and never as `[^1]`; and two source-level
-guards that fail the run when the wrapper drops `--python 3.12`, or when the docs
-reintroduce a parameter markitdown does not have or a format claim that
-contradicts 0.1.8.
+nothing leaked to stdout, and skipped files reported with a reason); a directory
+holding one corrupt `.docx` (the good file must still convert, the bad one must
+not be written, exit code 1, root cause in stderr); `-o` writing a file while
+stdout stays empty; the no-OCR limitation for images, plus a silent WAV, both
+asserted as empty output **with** the stderr warning and exit code 0; a footnoted
+`.docx` that must render as `[[1]](#footnote-1)` + a trailing list and never as
+`[^1]`; a `data:` URI, stdin with `-x`, and the `--help` surface; `--json`
+batch output (counts per bucket); and four source-level guards that fail the run
+when the wrapper drops `--python 3.12`, loses URI/`--extra`/skip-report support,
+or when the docs reintroduce a parameter markitdown does not have or a format
+claim that contradicts 0.1.8.
 
 ## When to Use This Skill
 
 Use markitdown instead of raw tools when:
 - You need a **single tool** for multiple document formats
-- The document is in an **unusual or legacy format** (.doc, .ppt)
+- The input is a **URL or a stream**, not a local file
 - You want **clean Markdown output** rather than raw text extraction
 - The user hasn't specified which format tool to use
 
@@ -208,4 +264,6 @@ Prefer direct tools (pypdf, python-docx, etc.) when:
 
 - For format-specific details and known limitations, read `references/formats.md`
 - For programmatic Python usage, see the [markitdown GitHub](https://github.com/microsoft/markitdown)
-- For Azure Document Intelligence, transcription or plugin support, call the markitdown Python API directly — this wrapper does not expose those options
+- For a backend that needs constructor kwargs this wrapper does not expose
+  (`llm_client`/`llm_model` for vision, `style_map`, `exiftool_path`), add the
+  matching `--extra` and call the markitdown Python API directly
