@@ -40,10 +40,14 @@ This reference contains format-specific behavior, limitations, and tips for mark
 
 ### .docx (Modern)
 - Excellent support: headings, tables, images, lists all preserved
-- Tracked changes are NOT included by default
-- To include tracked changes:
+- Tracked changes are **not** converted, and 0.1.8 offers no way to include
+  them: `include_formatting=True` is not a parameter anywhere in the installed
+  source, and `MarkItDown(**kwargs)` swallows unknown kwargs silently, so the
+  call appears to work and changes nothing.
+- Style mapping is the one real DOCX knob. The converter reads `style_map` from
+  the conversion kwargs:
   ```python
-  converter = MarkItDown(include_formatting=True)
+  MarkItDown().convert("file.docx", style_map="p[style-name='Quote'] => blockquote")
   ```
 
 ### .doc (Legacy)
@@ -55,20 +59,22 @@ This reference contains format-specific behavior, limitations, and tips for mark
   ```
 
 ### Special Elements
-- **Footnotes**: Extracted as markdown footnotes `[^1]`
+- **Footnotes**: rendered as an inline reference plus a list at the end, not as
+  `[^1]` syntax. Verified on a one-footnote document:
+  `Body text with a note[[1]](#footnote-1)` followed by
+  `1. FOOTNOTE-MARKER-TEXT [↑](#footnote-ref-1)`. Pinned by eval 19.
 - **Headers/Footers**: Usually omitted (as they should be)
 - **Embedded objects**: Not extracted (links to them may remain)
 
 ## Excel Spreadsheets (.xlsx / .xls)
 
 ### Sheet Handling
-- Only the **first sheet** is converted by default
-- To convert all sheets, use markitdown directly:
-  ```python
-  converter = MarkItDown()
-  for sheet_name in workbook.sheetnames:
-      md = converter.convert(f"file.xlsx::{sheet_name}")
-  ```
+- **Every sheet is converted**, in workbook order, each under an
+  `## <sheet name>` heading (`pandas.read_excel(..., sheet_name=None)`).
+  Verified on a two-sheet workbook: both `## SheetOne` and `## SheetTwo` come
+  back.
+- There is no first-sheet-only mode, and no `file.xlsx::Sheet` pseudo-path:
+  0.1.8 ignores that selector rather than honoring it.
 
 ### Tables
 - Tables are emitted as Markdown tables; there is no CSV flag in this wrapper
@@ -83,8 +89,11 @@ This reference contains format-specific behavior, limitations, and tips for mark
 ## PowerPoint (.pptx / .ppt)
 
 ### Slide Structure
-- Each slide becomes a `## Slide N` heading
-- Speaker notes are included if present
+- Each slide starts with an HTML comment, not a heading:
+  `<!-- Slide number: 1 -->`. Slide titles arrive as `# ...` because they are
+  literal title text, not because of the comment.
+- Speaker notes are appended as `### Notes:`, and only when the notes text frame
+  is non-empty.
 - Bullet points are preserved
 
 ### Content
@@ -160,8 +169,12 @@ uv run --with "markitdown[audio-transcription]" markitdown meeting.mp3
 ## Archive Files (.zip)
 
 ### Behavior
-- Archives are NOT automatically extracted
-- **Workaround**: Extract first, then convert contents:
+- `.zip` **is** handled by `ZipConverter`: it walks the archive and emits every
+  contained file under a `## File: <name>` heading, preceded by
+  ``Content from the zip file `...`:``. Verified with a one-entry archive.
+- An archive nested inside an archive is not re-entered.
+- No need to `unzip` first; this workaround is only for formats the converter
+  cannot read at all:
   ```bash
   unzip archive.zip -d extracted/
   markitdown extracted/

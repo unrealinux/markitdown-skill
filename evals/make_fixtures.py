@@ -13,6 +13,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import wave
 import zipfile
 import zlib
 
@@ -33,6 +34,12 @@ sheet.title = "Sales"
 sheet.append(["Region", "Sales"])
 sheet.append(["North", "120"])
 sheet.append(["South", "90"])
+
+# A second sheet: the converter reads sheet_name=None, so every sheet lands in
+# the markdown under its own ## heading. Asserted by eval 8.
+stock = book.create_sheet("Inventory")
+stock.append(["Item", "Qty"])
+stock.append(["Widget", "7"])
 book.save(os.path.join(out, "sample.xlsx"))
 
 from pptx import Presentation
@@ -175,6 +182,50 @@ def write_docx(path):
         archive.writestr("word/document.xml", document)
 
 
+FOOTNOTE_CONTENT_TYPES = CONTENT_TYPES.replace(
+    "</Types>",
+    '<Override PartName="/word/footnotes.xml" '
+    'ContentType="application/vnd.openxmlformats-officedocument.'
+    'wordprocessingml.footnotes+xml"/>\n</Types>',
+)
+
+FOOTNOTE_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>
+</Relationships>"""
+
+FOOTNOTE_DOCUMENT = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+    "<w:body>"
+    '<w:p><w:r><w:t xml:space="preserve">Body text with a note</w:t></w:r>'
+    '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr>'
+    '<w:footnoteReference w:id="1"/></w:r></w:p>'
+    "</w:body></w:document>"
+)
+
+FOOTNOTE_PART = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>
+<w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>
+<w:footnote w:id="1"><w:p><w:r><w:t xml:space="preserve">FOOTNOTE-MARKER-TEXT</w:t></w:r></w:p></w:footnote>
+</w:footnotes>"""
+
+
+def write_footnote_docx(path):
+    """A .docx holding one real footnote.
+
+    markitdown renders it as an inline `[[1]](#footnote-1)` reference plus a
+    trailing ordered list, NOT as `[^1]`; eval 19 pins that down.
+    """
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", FOOTNOTE_CONTENT_TYPES)
+        archive.writestr("_rels/.rels", ROOT_RELS)
+        archive.writestr("word/_rels/document.xml.rels", FOOTNOTE_RELS)
+        archive.writestr("word/document.xml", FOOTNOTE_DOCUMENT)
+        archive.writestr("word/footnotes.xml", FOOTNOTE_PART)
+
+
 def write_pdf(path, text="PDF fixture text 12345"):
     """Write a minimal single-page PDF with a real text layer (no OCR needed)."""
     stream = f"BT /F1 14 Tf 20 60 Td ({text}) Tj ET".encode("latin-1")
@@ -208,6 +259,26 @@ def write_pdf(path, text="PDF fixture text 12345"):
         handle.write(bytes(out))
 
 
+def write_zip(path, name="inner.txt", text="zip fixture content\n"):
+    """One-entry archive. markitdown's ZipConverter unpacks it itself."""
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(name, text)
+
+
+def write_wav(path, seconds=0.1, rate=8000):
+    """A silent WAV.
+
+    markitdown returns empty text for it: no exiftool for metadata, and the
+    audio-transcription extra (speech_recognition) is never installed by the
+    wrapper. That is the behaviour eval 17 pins down.
+    """
+    with wave.open(path, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(1)
+        handle.setframerate(rate)
+        handle.writeframes(b"\x80" * int(seconds * rate))
+
+
 def main():
     setup_stdio()
     if os.path.isdir(FIXTURES):
@@ -232,8 +303,11 @@ def main():
         )
 
     write_docx(os.path.join(FIXTURES, "sample.docx"))
+    write_footnote_docx(os.path.join(FIXTURES, "sample_footnote.docx"))
     write_pdf(os.path.join(FIXTURES, "sample.pdf"))
     write_png(os.path.join(FIXTURES, "sample.png"))
+    write_zip(os.path.join(FIXTURES, "sample.zip"))
+    write_wav(os.path.join(FIXTURES, "sample.wav"))
     write_office_fixtures()
 
     tree = os.path.join(FIXTURES, "tree")
@@ -271,6 +345,14 @@ def main():
         handle.write("source,alpha\n")
     with open(os.path.join(collide, "other.txt"), "w", encoding="utf-8") as handle:
         handle.write("unrelated\n")
+
+    # Empty-output path: an image with no text layer next to a real text file.
+    # Batch mode must warn (⚠️ 0 chars) instead of claiming a clean conversion.
+    scan = os.path.join(FIXTURES, "scan")
+    os.makedirs(scan, exist_ok=True)
+    write_png(os.path.join(scan, "scan.png"))
+    with open(os.path.join(scan, "note.txt"), "w", encoding="utf-8") as handle:
+        handle.write("scan folder note\n")
 
     print(f"fixtures written to {FIXTURES}")
 

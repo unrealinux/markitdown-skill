@@ -1,7 +1,7 @@
 ---
 name: markitdown
 description: "Use this skill whenever the user wants to read, extract, or convert any document file to Markdown. Triggers include: any mention of 'PDF', 'Word', 'docx', 'doc', 'PowerPoint', 'pptx', 'Excel', 'xlsx', 'spreadsheet', 'image with text', 'scan', 'OCR', 'extract text', 'convert to markdown', 'read this document', 'what is in this file', 'summarize this document'. Also triggers when the user provides a file path and asks to see its content in text form. Use for any document format that needs to be transformed into readable Markdown."
-license: MIT (from microsoft/markitdown)
+license: MIT (see LICENSE; markitdown itself is MIT © Microsoft and is installed at runtime)
 ---
 
 # MarkItDown — Document to Markdown Converter
@@ -36,10 +36,10 @@ markitdown package is auto-installed on first use via uv, as
 read `.docx`, `.xlsx`, `.pptx` or `.pdf` and raises `MissingDependencyException`.
 Expect a 1-2 minute download on the very first conversion; later runs hit the cache.
 
-**Windows:** use `py` (the `python` on PATH is the Windows Store stub and prints nothing) and no `~/.local/bin` prefix. uv is already installed at `%APPDATA%\Python\Python314\Scripts\uv.exe`, and Python 3.12 is registered with uv. Example:
+**Windows:** use `py` (the `python` on PATH is the Windows Store stub and prints nothing) and no `~/.local/bin` prefix. uv usually lives at `%APPDATA%\Python\Python3xx\Scripts\uv.exe`, and this wrapper asks uv for Python 3.12 explicitly. Every example below writes `python3`; on Windows substitute `py`. Example:
 
 ```bash
-py "C:/Users/Administrator/.agents/skills/markitdown/scripts/convert.py" document.pdf -o output.md
+py "<skill_dir>/scripts/convert.py" document.pdf -o output.md
 ```
 
 ## Usage
@@ -90,6 +90,10 @@ file. That delay is normal — do not kill the process and retry.
   (`speech_recognition` + `pydub` + ffmpeg) and the wrapper does not install it.
 - **`.doc` / `.ppt`** go through LibreOffice; install it or convert to `.docx` /
   `.pptx` first.
+- **Empty output is not an error.** A scanned page, an image, or audio without
+  the transcription extra converts to zero characters with exit code 0.
+  Single-file mode says so on stderr; batch mode prints `⚠️ ... (0 chars ...)`
+  and counts an `N empty` total instead of a clean `✅`.
 
 ## Supported Formats
 
@@ -103,7 +107,7 @@ See `references/formats.md` for detailed format-specific notes.
 | Images | `.jpg`, `.png`, `.gif`, `.bmp`, `.webp` | Metadata only — **no OCR**, text in images is lost |
 | Web | `.html`, `.htm` | Stripped of scripts/styles |
 | Archives | `.zip` (with documents) | Extracts and converts contained files |
-| Audio | `.mp3`, `.wav`, `.m4a` | Speech-to-text via Azure or local |
+| Audio | `.mp3`, `.wav`, `.m4a` | Metadata only here — the `audio-transcription` extra is not installed, and the missing dependency is swallowed, so audio returns empty output with exit code 0 |
 
 ## Script Reference
 
@@ -115,7 +119,7 @@ The bundled script at `scripts/convert.py` wraps markitdown with sensible defaul
 
 Or set up an alias for convenience:
 ```bash
-alias markitdown='~/.local/bin/uv run --with markitdown --python 3.12 python ~/.agents/skills/markitdown/scripts/convert.py'
+alias markitdown='~/.local/bin/uv run --with "markitdown[docx,xls,xlsx,pptx,pdf]" --python 3.12 python ~/.agents/skills/markitdown/scripts/convert.py'
 markitdown document.pdf -o output.md
 ```
 
@@ -173,13 +177,19 @@ network. `sample.xlsx` and `sample.pptx` are generated through uv with
 readers exactly; if uv or the network is unavailable the two office evals are
 reported as SKIP rather than failed.
 
-Covers 11 evals: txt / csv / html / docx / pdf / xlsx / pptx text extraction;
-batch mode with nested directories (same-named files must not overwrite, hidden
-directories skipped, nothing leaked to stdout); a directory holding one corrupt
-`.docx` (the good file must still convert, the bad one must not be written, exit
-code 1, root cause in stderr); `-o` writing a file while stdout stays empty; and
-the no-OCR limitation for images, asserted as empty output so it fails loudly if
-that ever changes.
+Covers 19 evals: txt / csv / html / docx / pdf / xlsx / pptx text extraction
+(the xlsx fixture has two sheets, so a first-sheet-only regression fails); a
+`.zip` that must come back auto-unpacked under `## File:`; batch mode with nested
+directories (same-named files must not overwrite, hidden directories skipped,
+nothing leaked to stdout); a directory holding one corrupt `.docx` (the good file
+must still convert, the bad one must not be written, exit code 1, root cause in
+stderr); `-o` writing a file while stdout stays empty; the no-OCR limitation for
+images, plus a silent WAV, both asserted as empty output **with** the stderr
+warning and exit code 0; a footnoted `.docx` that must render as
+`[[1]](#footnote-1)` + a trailing list and never as `[^1]`; and two source-level
+guards that fail the run when the wrapper drops `--python 3.12`, or when the docs
+reintroduce a parameter markitdown does not have or a format claim that
+contradicts 0.1.8.
 
 ## When to Use This Skill
 

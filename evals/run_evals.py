@@ -70,6 +70,10 @@ def check_file_eval(spec, workdir):
         last = err.strip().splitlines()[-1] if err.strip() else "no stderr"
         problems.append(f"exit code {code}, expected {expected_code}: {last}")
 
+    for needle in spec.get("expect_stderr_contains", []):
+        if needle not in err:
+            problems.append(f"stderr missing: {needle!r}")
+
     if output_file is not None:
         if not os.path.isfile(output_file):
             problems.append(f"no output file written: {output_file}")

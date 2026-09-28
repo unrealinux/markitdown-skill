@@ -6,10 +6,10 @@
 
 - 📄 PDF 转换（需要 PDF 自带文字层）
 - 📝 Word 文档 (.docx, .doc)
-- 📊 Excel 电子表格 (.xlsx)
+- 📊 Excel 电子表格 (.xlsx, .xls)
 - 📑 PowerPoint 演示文稿 (.pptx)
 - 🖼️ 图片元数据（**不做 OCR**）
-- 🎵 音频转文字（需 Azure/Whisper，走 Python API，不在本脚本内）
+- 🎵 音频元数据（转文字需要 `audio-transcription` extra + `speech_recognition`，本脚本不安装，缺依赖时静默返回空）
 - 🌐 HTML 页面
 - 📦 批量文件夹转换（保留子目录结构）
 
@@ -35,7 +35,7 @@ python3 evals/make_fixtures.py && python3 evals/run_evals.py
 
 夹具中的 txt/csv/html/docx/pdf/png 与目录树由标准库生成，不需要联网；`sample.xlsx` / `sample.pptx` 通过 uv + `openpyxl` + `python-pptx` 生成（手写 OOXML 很难同时满足这两个读取器），拿不到网络时这两条评测显示为 SKIP 而不是失败。
 
-共 11 条评测，覆盖文本提取（txt/csv/html/docx/pdf/xlsx/pptx）、批量目录结构、坏文件与好文件混在一起时的退出码与报错、`-o` 落盘，以及「markitdown 不能 OCR」这条已知限制。
+共 19 条评测，覆盖文本提取（txt/csv/html/docx/pdf/xlsx/pptx，其中 xlsx 夹具含两个工作表）、zip 自动解包、docx 脚注的真实渲染（`[[1]](#footnote-1)` 而不是 `[^1]`）、批量目录结构（含同名不同后缀不互相覆盖）、坏文件与好文件混在一起时的退出码与报错、`-o` 落盘、「markitdown 不能 OCR」这条已知限制（图片和音频都断言空输出 + stderr 警告 + 退出码 0），以及两条源码级守卫：包装脚本必须固定 `--python 3.12`，文档不得出现 markitdown 里不存在的参数名或与 0.1.8 实际行为矛盾的格式说明。
 
 批量模式在**同一个解释器**里转完所有文件（`import markitdown` 本身要 5 秒）。实测：4 个文件 21.9s → 6.0s，101 个文件约 9 秒。单文件模式绕不开这 5 秒，等 6-9 秒是正常的，不要当成卡死。
 
@@ -67,11 +67,14 @@ python3 <skill_dir>/scripts/convert.py data.xlsx -o data.md
 
 ```
 markitdown/
-├── SKILL.md              # 主技能文件
+├── SKILL.md                  # 主技能文件
+├── LICENSE                   # MIT（markitdown 本体为 MIT © Microsoft，运行时安装）
 ├── scripts/
-│   └── convert.py        # 转换脚本
+│   └── convert.py            # 转换脚本
 ├── references/
-│   └── formats.md        # 格式说明
+│   └── formats.md            # 格式说明
 └── evals/
-    └── evals.json        # 测试用例
+    ├── evals.json            # 测试用例定义
+    ├── make_fixtures.py      # 生成夹具（fixtures/ 不入库）
+    └── run_evals.py          # 执行评测
 ```

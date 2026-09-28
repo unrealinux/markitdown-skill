@@ -72,22 +72,23 @@
     {
       "id": 7,
       "prompt": "读一下 evals/fixtures/sample.png 里的文字",
-      "expected_output": "markitdown 没有 OCR：PNG 不产出正文文字，也不报错（这是已知限制，不是 bug）",
+      "expected_output": "markitdown 没有 OCR：PNG 不产出正文文字，也不报错，但要在 stderr 上说明空输出（这是已知限制，不是 bug）",
       "files": ["evals/fixtures/sample.png"],
       "mode": "file",
       "min_chars": 0,
       "max_chars": 50,
       "expect_contains": [],
+      "expect_stderr_contains": ["no extractable text"],
       "expect_not_contains": ["HELLO"]
     },
     {
       "id": 8,
       "prompt": "把 evals/fixtures/sample.xlsx 里的数据提取出来",
-      "expected_output": "Excel 转成 Markdown 表格，表头和两行数据都在",
+      "expected_output": "Excel 的**每个**工作表都转成 Markdown 表格：## Sales 与 ## Inventory 及各自数据都在",
       "files": ["evals/fixtures/sample.xlsx"],
       "mode": "file",
       "min_chars": 20,
-      "expect_contains": ["Region", "Sales", "North", "120", "South", "90"],
+      "expect_contains": ["## Sales", "## Inventory", "Region", "Sales", "North", "120", "South", "90", "Widget", "7"],
       "expect_not_contains": []
     },
     {
@@ -167,6 +168,70 @@
         "azure_model=",
         "azure_speech_key="
       ]
+    },
+    {
+      "id": 15,
+      "prompt": "格式文档必须与 markitdown 0.1.8 的实际行为一致（工作表、幻灯片、zip、docx 参数）",
+      "expected_output": "全部工作表、<!-- Slide number: N -->、zip 自动解包、include_formatting 不存在，均已按实测写进 references/formats.md",
+      "files": ["references/formats.md"],
+      "mode": "source",
+      "expect_contains": [
+        "Every sheet is converted",
+        "<!-- Slide number:",
+        "ZipConverter",
+        "is not a parameter anywhere"
+      ],
+      "expect_not_contains": [
+        "Only the **first sheet**",
+        "Each slide becomes a `## Slide N` heading",
+        "Archives are NOT automatically extracted"
+      ]
+    },
+    {
+      "id": 16,
+      "prompt": "把 evals/fixtures/sample.zip 里的内容读出来",
+      "expected_output": "zip 会被自动解包，不去要先 unzip：输出里有 ## File: 和压缩包内的文本",
+      "files": ["evals/fixtures/sample.zip"],
+      "mode": "file",
+      "min_chars": 20,
+      "expect_contains": ["## File:", "inner.txt", "zip fixture content"],
+      "expect_not_contains": []
+    },
+    {
+      "id": 17,
+      "prompt": "把 evals/fixtures/sample.wav 转成文字",
+      "expected_output": "没有 audio-transcription extra：音频返回空文本、退出码 0，stderr 要说明空输出，而不是假装转出了文字",
+      "files": ["evals/fixtures/sample.wav"],
+      "mode": "file",
+      "min_chars": 0,
+      "max_chars": 50,
+      "expect_contains": [],
+      "expect_stderr_contains": ["no extractable text", "📄 Converting"],
+      "expect_not_contains": ["Audio Transcript"]
+    },
+    {
+      "id": 18,
+      "prompt": "批量转换 evals/fixtures/scan（一个没有文字层的图片 + 一个正常 txt）",
+      "expected_output": "图片的 0 字符输出必须报 ⚠️ 并在汇总里计数，不能算成干净的 ✅；txt 照常转换，退出码 0",
+      "files": ["evals/fixtures/scan"],
+      "mode": "dir",
+      "recursive": false,
+      "expect_files": {
+        "note.md": "scan folder note",
+        "scan.md": ""
+      },
+      "expect_stderr_contains": ["0 chars", "1 empty"],
+      "expect_stdout_empty": true
+    },
+    {
+      "id": 19,
+      "prompt": "把 evals/fixtures/sample_footnote.docx 转成 Markdown，脚注怎么处理",
+      "expected_output": "脚注是内联 [[1]](#footnote-1) + 文末有序列表（带回链），不是 [^1] 语法",
+      "files": ["evals/fixtures/sample_footnote.docx"],
+      "mode": "file",
+      "min_chars": 20,
+      "expect_contains": ["[[1]](#footnote-1)", "FOOTNOTE-MARKER-TEXT", "[↑](#footnote-ref-1)"],
+      "expect_not_contains": ["[^1]"]
     }
   ]
 }

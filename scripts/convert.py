@@ -80,17 +80,20 @@ BATCH_SNIPPET = (
 
 
 def force_utf8_stdout():
-    """Make this process emit UTF-8 Markdown.
+    """Make this process emit UTF-8 on both streams.
 
     The child interpreter is handled separately by child_env(); this covers the
-    wrapper itself, whose stdout would otherwise be the Windows ANSI code page.
+    wrapper itself, whose stdout and stderr would otherwise be the Windows ANSI
+    code page. stderr needs the encoding, not just the error handler: with
+    errors="backslashreplace" alone the progress and result emoji were written
+    as literal \\U0001f680 / \\u2705 escapes under cp936.
     """
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except (AttributeError, ValueError):
         pass
     try:
-        sys.stderr.reconfigure(errors="backslashreplace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     except (AttributeError, ValueError):
         pass
 
@@ -160,6 +163,10 @@ def convert_one(input_path, uv_path, output_path=None):
         return None
 
     text = result.stdout
+    if not text.strip():
+        print("⚠️  Empty output: no extractable text. A scanned PDF or an image "
+              "has no text layer (markitdown ships no OCR engine), and audio "
+              "needs the audio-transcription extra.", file=sys.stderr)
     if output_path:
         parent = os.path.dirname(os.path.abspath(output_path))
         os.makedirs(parent, exist_ok=True)
@@ -279,11 +286,21 @@ def convert_batch(input_dir, output_dir, uv_path, recursive=False):
     results = run_batch_jobs(jobs, uv_path)
 
     converted = 0
+    empty = []
     failed = []
     for job, record in zip(jobs, results):
         if record and record.get("ok"):
             converted += 1
-            print(f"✅ {job['output']} ({record.get('chars', 0)} chars)", file=sys.stderr)
+            chars = record.get("chars", 0)
+            if chars:
+                print(f"✅ {job['output']} ({chars} chars)", file=sys.stderr)
+            else:
+                # Success with zero characters is almost always a scan, an image
+                # or audio; reporting it as a plain ✅ hid that from the caller.
+                empty.append(job["output"])
+                print(f"⚠️  {job['output']} (0 chars — no extractable text: "
+                      "scanned page, image, or audio without the "
+                      "transcription extra)", file=sys.stderr)
             continue
         failed.append(job["input"])
         detail = (record or {}).get("error") or "no result (the converter stopped early)"
@@ -297,7 +314,10 @@ def convert_batch(input_dir, output_dir, uv_path, recursive=False):
             shown = shown[:237] + "..."
         print(f"❌ {job['input']}: {shown}", file=sys.stderr)
 
-    print(f"📦 Batch finished: {converted} converted, {len(failed)} failed", file=sys.stderr)
+    summary = f"📦 Batch finished: {converted} converted, {len(failed)} failed"
+    if empty:
+        summary += f", {len(empty)} empty"
+    print(summary, file=sys.stderr)
     return 1 if failed else 0
 
 
