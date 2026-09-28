@@ -4,7 +4,7 @@ description: "Use this skill whenever the user wants to read, extract, or conver
 license: MIT (see LICENSE; markitdown itself is MIT © Microsoft and is installed at runtime)
 compatibility: Requires Python 3.10+ and uv; the first run downloads markitdown from PyPI, so it needs network access (later runs use the uv cache).
 metadata:
-  version: 0.1.0
+  version: 0.1.1
   author: unrealinux
   homepage: https://github.com/unrealinux/markitdown-skill
 ---
@@ -53,6 +53,8 @@ Expect a 1-2 minute download on the very first conversion; later runs hit the ca
 ```bash
 py "<skill_dir>/scripts/convert.py" document.pdf -o output.md
 ```
+
+`<skill_dir>` is this skill's own directory — the folder containing this SKILL.md. After a manual install it is `~/.agents/skills/markitdown`; `README.md` has the install steps and a two-command check.
 
 ## Usage
 

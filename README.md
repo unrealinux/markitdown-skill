@@ -2,6 +2,30 @@
 
 这是一个基于 [microsoft/markitdown](https://github.com/microsoft/markitdown) 的技能，可以将各种文档格式转换为 Markdown。
 
+## 安装这个技能
+
+把压缩包解到 agent 读取技能目录的位置。Pi 和 Claude Code 都读 `~/.agents/skills/`，其它实现填它自己的技能目录：
+
+```bash
+unzip markitdown-*.zip -d ~/.agents/skills/
+```
+
+解压出来的目录名必须是 `markitdown`（Agent Skills 规范要求 frontmatter 的 `name` 等于父目录名），不要改名、也不要再套一层目录。开发时建议用软链指向工作副本，否则仓库更新不会生效：
+
+```bash
+ln -s /path/to/markitdown-skill ~/.agents/skills/markitdown
+```
+
+验证装好了（Windows 把 `python3` 换成 `py`）：
+
+```bash
+SKILL=~/.agents/skills/markitdown
+python3 $SKILL/scripts/convert.py --help          # 列出全部开关，不联网
+python3 $SKILL/scripts/convert.py $SKILL/evals/fixtures/sample.txt   # 首次会下载依赖，约 1-2 分钟
+```
+
+agent 会自动按 `SKILL.md` 的 `description` 触发；也可以显式调用 `/skill:markitdown`。
+
 ## 功能
 
 - 📄 PDF 转换（需要 PDF 自带文字层）
@@ -16,7 +40,7 @@
 - 📦 批量文件夹转换（保留子目录结构，`--json` 输出机器可读汇总）
 - ☁️ `--extra` 一键解锁 Azure Document Intelligence / Content Understanding / 插件后端
 
-## 安装
+## 运行环境
 
 **需要 Python 3.10+ 和 [uv](https://astral.sh/uv)。** markitdown 本体由 uv 按需安装（首次运行会下载，之后走缓存），不需要手动 pip。
 
@@ -99,21 +123,15 @@ py scripts/package_skill.py --version 1.0.0 --out /tmp
 - 不包含 `.git/`、`__pycache__/`、`*.pyc`、`dist/`
 - 输出**可复现**：文件排序 + 固定时间戳，同一份源码永远同一个 sha256（实测两次构建一致）
 
-三种消费方式：
+分发方式：
 
 ```bash
-# 1. 手动安装（pi / Claude Code 都读 ~/.agents/skills/）
-unzip markitdown-0.1.0.zip -d ~/.agents/skills/
+# 1. 手动安装：见前面的「安装这个技能」
 
 # 2. GitHub Release 附件：把 zip 传上去，用户用打印出的 sha256 校验
+gh release create v0.1.1 dist/markitdown-0.1.1.zip --notes-file dist/RELEASE_NOTES.md
 
 # 3. npm 包 + Pi 目录（pi.dev/packages）：package.json 里加 pi.skills + pi-package 关键字
-```
-
-开发时建议软链而不是复制，否则仓库更新不会生效：
-
-```bash
-ln -s /path/to/markitdown-skill ~/.agents/skills/markitdown
 ```
 
 ## 文件结构
