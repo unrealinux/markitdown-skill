@@ -22,6 +22,7 @@ A universal document reader powered by [microsoft/markitdown](https://github.com
 | **Azure Content Understanding** | `--use-cu --cu-endpoint <endpoint>` plus `--extra az-content-understanding` |
 | **Third-party plugins** | `-p`, or `--list-plugins` to see what is installed |
 | **Keep base64 images** | `--keep-data-uris` (the default truncates data URIs) |
+| **Custom DOCX styles** | `--style-map "p[style-name='Quote'] => blockquote"` — constructs `MarkItDown(style_map=...)` |
 
 **Not provided:** OCR and CSV export. markitdown ships no OCR engine — scanned PDFs and pictures of text come back empty. See [Limitations](#limitations).
 
@@ -90,7 +91,15 @@ python3 <skill_dir>/scripts/convert.py scan.pdf --extra az-content-understanding
 
 # Every backend at once (large download; only the first run pays it)
 python3 <skill_dir>/scripts/convert.py scan.pdf --extra all
+
+# DOCX style mapping (documented in references/formats.md)
+python3 <skill_dir>/scripts/convert.py report.docx --style-map "p[style-name='Quote'] => blockquote"
 ```
+
+`--style-map` is the one option markitdown's CLI cannot express, so that input is
+run through this wrapper's own snippet (batch mode uses the same code path). Its
+output is byte-identical to `MarkItDown(style_map=...).convert(...)`, verified by
+eval 27.
 
 ### Batch conversion
 
@@ -231,7 +240,7 @@ network. `sample.xlsx` and `sample.pptx` are generated through uv with
 readers exactly; if uv or the network is unavailable the two office evals are
 reported as SKIP rather than failed.
 
-Covers 26 evals: txt / csv / html / docx / pdf / xlsx / pptx text extraction
+Covers 27 evals: txt / csv / html / docx / pdf / xlsx / pptx text extraction
 (the xlsx fixture has two sheets, so a first-sheet-only regression fails); a
 `.zip` that must come back auto-unpacked under `## File:`; batch mode with nested
 directories (same-named files must not overwrite, hidden directories skipped,
@@ -242,7 +251,8 @@ stdout stays empty; the no-OCR limitation for images, plus a silent WAV, both
 asserted as empty output **with** the stderr warning and exit code 0; a footnoted
 `.docx` that must render as `[[1]](#footnote-1)` + a trailing list and never as
 `[^1]`; a `data:` URI, stdin with `-x`, and the `--help` surface; `--json`
-batch output (counts per bucket); and four source-level guards that fail the run
+batch output (counts per bucket); a `--style-map` run that must match the direct
+`MarkItDown(style_map=...)` output; and four source-level guards that fail the run
 when the wrapper drops `--python 3.12`, loses URI/`--extra`/skip-report support,
 or when the docs reintroduce a parameter markitdown does not have or a format
 claim that contradicts 0.1.8.
@@ -265,5 +275,6 @@ Prefer direct tools (pypdf, python-docx, etc.) when:
 - For format-specific details and known limitations, read `references/formats.md`
 - For programmatic Python usage, see the [markitdown GitHub](https://github.com/microsoft/markitdown)
 - For a backend that needs constructor kwargs this wrapper does not expose
-  (`llm_client`/`llm_model` for vision, `style_map`, `exiftool_path`), add the
-  matching `--extra` and call the markitdown Python API directly
+  (`llm_client`/`llm_model` for vision; `exiftool_path` — set `EXIFTOOL_PATH` or
+  put exiftool on PATH instead), add the matching `--extra` and call the
+  markitdown Python API directly. `style_map` is exposed: `--style-map`.

@@ -261,7 +261,7 @@
       "mode": "cli",
       "args": ["--help"],
       "min_chars": 500,
-      "expect_stdout_contains": ["--extension", "--mime-type", "--charset", "--use-docintel", "--use-cu", "--use-plugins", "--list-plugins", "--keep-data-uris", "--extra", "--json", "--output-dir"]
+      "expect_stdout_contains": ["--extension", "--mime-type", "--charset", "--use-docintel", "--use-cu", "--use-plugins", "--list-plugins", "--keep-data-uris", "--extra", "--json", "--output-dir", "--style-map"]
     },
     {
       "id": 23,
@@ -303,6 +303,16 @@
       "mode": "source",
       "expect_contains": ["no LibreOffice path"],
       "expect_not_contains": ["antiword", "soffice", "gif", "bmp", "webp"]
+    },
+    {
+      "id": 27,
+      "prompt": "convert.py evals/fixtures/sample.docx --style-map \"p => blockquote\"",
+      "expected_output": "style_map 必须真的到达转换器：段落变引用块，且输出和直接调 MarkItDown(style_map=...) 逐字节一致",
+      "mode": "cli",
+      "args": ["{skill}/evals/fixtures/sample.docx", "--style-map", "p => blockquote"],
+      "min_chars": 20,
+      "expect_stdout_contains": ["> Fixture Heading", "Fixture paragraph"],
+      "expect_not_contains": ["# Fixture Heading"]
     }
   ]
 }

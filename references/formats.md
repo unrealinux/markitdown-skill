@@ -45,10 +45,15 @@ This reference contains format-specific behavior, limitations, and tips for mark
   source, and `MarkItDown(**kwargs)` swallows unknown kwargs silently, so the
   call appears to work and changes nothing.
 - Style mapping is the one real DOCX knob. The converter reads `style_map` from
-  the conversion kwargs:
+  the constructor kwargs, and the wrapper exposes it as `--style-map`:
   ```python
   MarkItDown().convert("file.docx", style_map="p[style-name='Quote'] => blockquote")
   ```
+  ```bash
+  python3 scripts/convert.py file.docx --style-map "p[style-name='Quote'] => blockquote"
+  ```
+  With an undefined style (a hand-built `.docx` with no `styles.xml`) mammoth
+  cannot match a style *name*; map `p` itself or add the style definition.
 
 ### .doc (Legacy) — not supported
 - There is **no LibreOffice path** in markitdown 0.1.8 (no office-conversion
@@ -213,8 +218,9 @@ uv run --with "markitdown[audio-transcription]" markitdown meeting.mp3
 All of these need `markitdown[all]` (or the specific extra). The wrapper starts
 with `markitdown[docx,xls,xlsx,pptx,pdf]` and adds whatever `--extra NAME` asks
 for, so most of them are one flag away; only constructor kwargs the wrapper does
-not expose (`llm_client`, `llm_model`, `style_map`, `exiftool_path`) still need a
-direct Python call.
+not expose (`llm_client`, `llm_model`; `exiftool_path` has an `EXIFTOOL_PATH`
+environment fallback) still need a direct Python call. `style_map` is exposed as
+`--style-map`.
 
 ### Images via a vision model
 

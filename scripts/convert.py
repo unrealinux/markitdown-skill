@@ -113,6 +113,34 @@ BATCH_SNIPPET = (
     "    print(json.dumps(record, ensure_ascii=False), flush=True)\n"
 )
 
+# Single-input conversion normally delegates to markitdown's own CLI, but the
+# CLI has no flag for constructor kwargs like style_map. Those inputs go through
+# this snippet instead. argv: source ('-' for stdin) and an options JSON blob.
+SINGLE_SNIPPET = (
+    "import io\n"
+    "import json\n"
+    "import sys\n"
+    "from markitdown import MarkItDown\n"
+    "source = sys.argv[1]\n"
+    "options = json.loads(sys.argv[2])\n"
+    "ctor = dict(options.get('ctor') or {})\n"
+    "convert_kwargs = dict(options.get('convert') or {})\n"
+    "stream_info = None\n"
+    "hints = options.get('stream_info') or {}\n"
+    "if hints:\n"
+    "    from markitdown._stream_info import StreamInfo\n"
+    "    stream_info = StreamInfo(**hints)\n"
+    "converter = MarkItDown(**ctor)\n"
+    "if source == '-':\n"
+    "    result = converter.convert_stream(io.BytesIO(sys.stdin.buffer.read()),\n"
+    "                                      stream_info=stream_info,\n"
+    "                                      **convert_kwargs)\n"
+    "else:\n"
+    "    result = converter.convert(source, stream_info=stream_info,\n"
+    "                               **convert_kwargs)\n"
+    "sys.stdout.write(getattr(result, 'text_content', '') or '')\n"
+)
+
 EMPTY_OUTPUT_WARNING = (
     "⚠️  Empty output: no extractable text. A scanned PDF or an image has no "
     "text layer (markitdown ships no OCR engine); audio needs --extra "
@@ -268,6 +296,8 @@ def batch_options(args):
     ctor = {}
     if args.use_plugins:
         ctor["enable_plugins"] = True
+    if args.style_map:
+        ctor["style_map"] = args.style_map
     if args.use_docintel:
         ctor["docintel_endpoint"] = args.endpoint
     if args.use_cu:
@@ -314,21 +344,42 @@ def report_failure(result):
         print(f"   {line}", file=sys.stderr)
 
 
-def convert_one(args, uv_path, spec):
-    """Convert a single file, URL or stdin stream via markitdown's own CLI.
+def emit_text(args, text):
+    """Send the Markdown to stdout or -o, then warn when it is empty."""
+    if args.output:
+        parent = os.path.dirname(os.path.abspath(args.output))
+        os.makedirs(parent, exist_ok=True)
+        with open(args.output, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        print(f"✅ Saved to: {args.output} ({len(text)} chars)", file=sys.stderr)
+    else:
+        sys.stdout.write(text)
+        sys.stdout.flush()
 
-    Returns the Markdown text on success, None on failure.
+    if not text.strip():
+        print(EMPTY_OUTPUT_WARNING, file=sys.stderr)
+    return text
+
+
+def convert_one(args, uv_path, spec):
+    """Convert a single file, URL or stdin stream.
+
+    Returns the Markdown text on success, None on failure. markitdown's CLI does
+    the work unless a constructor kwarg it cannot express was requested
+    (`--style-map`), in which case the snippet path runs instead.
     """
     source = args.input
     print(f"📄 Converting: {'stdin' if source == '-' else source}", file=sys.stderr)
 
-    cmd = cli_command(uv_path, spec) + cli_args(args)
-    if args.output:
-        parent = os.path.dirname(os.path.abspath(args.output))
-        os.makedirs(parent, exist_ok=True)
-        cmd += ["-o", args.output]
-    if source != "-":
-        cmd.append(source)
+    if args.style_map:
+        ctor, convert_kwargs, stream_info = batch_options(args)
+        options = json.dumps({"ctor": ctor, "convert": convert_kwargs,
+                              "stream_info": stream_info})
+        cmd = uv_command(uv_path, spec, SINGLE_SNIPPET) + [source, options]
+    else:
+        cmd = cli_command(uv_path, spec) + cli_args(args)
+        if source != "-":
+            cmd.append(source)
 
     try:
         result = subprocess.run(
@@ -343,22 +394,7 @@ def convert_one(args, uv_path, spec):
         report_failure(result)
         return None
 
-    if args.output:
-        try:
-            with open(args.output, encoding="utf-8") as handle:
-                text = handle.read()
-        except OSError as exc:
-            print(f"❌ Output file not readable: {exc}", file=sys.stderr)
-            return None
-        print(f"✅ Saved to: {args.output} ({len(text)} chars)", file=sys.stderr)
-    else:
-        text = result.stdout
-        sys.stdout.write(text)
-        sys.stdout.flush()
-
-    if not text.strip():
-        print(EMPTY_OUTPUT_WARNING, file=sys.stderr)
-    return text
+    return emit_text(args, result.stdout)
 
 
 def collect_files(input_dir, recursive):
@@ -623,6 +659,9 @@ def build_parser():
     parser.add_argument("--keep-data-uris", action="store_true",
                         help="Keep base64 data URIs (images) in the output "
                              "instead of truncating them")
+    parser.add_argument("--style-map", metavar="TEXT",
+                        help="DOCX style mapping passed to MarkItDown(style_map=...) "
+                             "(e.g. \"p[style-name='Quote'] => blockquote\")")
     return parser
 
 
