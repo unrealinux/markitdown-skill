@@ -2,6 +2,11 @@
 name: markitdown
 description: "Use this skill whenever the user wants to read, extract, or convert any document file to Markdown. Triggers include: any mention of 'PDF', 'Word', 'docx', 'doc', 'PowerPoint', 'pptx', 'Excel', 'xlsx', 'spreadsheet', 'image with text', 'scan', 'OCR', 'extract text', 'convert to markdown', 'read this document', 'what is in this file', 'summarize this document'. Also triggers when the user provides a file path and asks to see its content in text form. Use for any document format that needs to be transformed into readable Markdown."
 license: MIT (see LICENSE; markitdown itself is MIT © Microsoft and is installed at runtime)
+compatibility: Requires Python 3.10+ and uv; the first run downloads markitdown from PyPI, so it needs network access (later runs use the uv cache).
+metadata:
+  version: 0.1.0
+  author: unrealinux
+  homepage: https://github.com/unrealinux/markitdown-skill
 ---
 
 # MarkItDown — Document to Markdown Converter
@@ -181,10 +186,11 @@ python3 scripts/convert.py INPUT [-o OUTPUT] [--output-dir DIR] [--recursive]
 ```
 
 Or set up an alias for convenience. The script runs uv itself, so the alias is
-just a path (`python3` on Unix, `py` on Windows):
+just a path to this skill's copy of the script (`python3` on Unix, `py` on
+Windows):
 
 ```bash
-alias markitdown='python3 ~/.agents/skills/markitdown/scripts/convert.py'
+alias markitdown='python3 scripts/convert.py'   # from the skill directory
 markitdown document.pdf -o output.md
 ```
 
@@ -242,7 +248,7 @@ network. `sample.xlsx` and `sample.pptx` are generated through uv with
 readers exactly; if uv or the network is unavailable the two office evals are
 reported as SKIP rather than failed.
 
-Covers 28 evals: txt / csv / html / docx / pdf / xlsx / pptx text extraction
+Covers 29 evals: txt / csv / html / docx / pdf / xlsx / pptx text extraction
 (the xlsx fixture has two sheets, so a first-sheet-only regression fails); a
 `.zip` that must come back auto-unpacked under `## File:`; batch mode with nested
 directories (same-named files must not overwrite, hidden directories skipped,
@@ -255,7 +261,9 @@ asserted as empty output **with** the stderr warning and exit code 0; a footnote
 `[^1]`; a `data:` URI, stdin with `-x`, and the `--help` surface; `--json`
 batch output (counts per bucket, plus the default `<input>_markdown` output
 directory); a `--style-map` run that must match the direct
-`MarkItDown(style_map=...)` output; and four source-level guards that fail the run
+`MarkItDown(style_map=...)` output; the packaging script's archive manifest
+(single top-level `markitdown/` folder, no build junk); and four source-level
+guards that fail the run
 when the wrapper drops `--python 3.12`, loses URI/`--extra`/skip-report support,
 or when the docs reintroduce a parameter markitdown does not have or a format
 claim that contradicts 0.1.8.

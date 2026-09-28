@@ -43,12 +43,12 @@ def setup_stdio():
         GREEN = RED = YELLOW = DIM = RESET = ""
 
 
-def run_convert(args, stdin_bytes=None):
-    """Run the wrapper, returning (exit_code, stdout, stderr)."""
+def run_convert(args, stdin_bytes=None, program=None):
+    """Run the wrapper (or another bundled script), returning (code, stdout, stderr)."""
     # stdin stays bytes (a PDF piped into `- -x pdf` is not text), so the streams
     # are decoded here instead of letting subprocess do it via encoding=.
     process = subprocess.run(
-        [sys.executable, CONVERT, *args],
+        [sys.executable, program or CONVERT, *args],
         input=stdin_bytes,
         capture_output=True,
     )
@@ -176,14 +176,19 @@ def check_dir_eval(spec, workdir):
 
 
 def check_cli_eval(spec, workdir):
-    """Run the wrapper with literal arguments: URIs, stdin and --help."""
-    args = [arg.replace("{skill}", SKILL_DIR) for arg in spec["args"]]
+    """Run a bundled script with literal arguments: URIs, stdin, --help, packaging."""
+    script = (os.path.join(SKILL_DIR, spec["script"]) if spec.get("script")
+              else CONVERT)
+    args = [
+        arg.replace("{skill}", SKILL_DIR).replace("{out}", workdir)
+        for arg in spec["args"]
+    ]
     stdin_bytes = None
     if spec.get("stdin_file"):
         with open(os.path.join(SKILL_DIR, spec["stdin_file"]), "rb") as handle:
             stdin_bytes = handle.read()
 
-    code, out, err = run_convert(args, stdin_bytes=stdin_bytes)
+    code, out, err = run_convert(args, stdin_bytes=stdin_bytes, program=script)
     problems = []
     expected_code = spec.get("expect_exit_code", 0)
     if code != expected_code:

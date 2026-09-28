@@ -329,6 +329,24 @@
       },
       "expect_stderr_contains": ["already Markdown"],
       "expect_stdout_empty": true
+    },
+    {
+      "id": 29,
+      "prompt": "打包脚本产出的 zip 必须能直接当技能安装：顶层只有 markitdown/，且不含构建垃圾",
+      "expected_output": "文件名带版本、顶层目录名等于 name、清单里有 SKILL.md 和 evals/fixtures/sample.zip（合法夹具不能被当构建产物剔除），且没有 __pycache__/.pyc",
+      "mode": "cli",
+      "script": "scripts/package_skill.py",
+      "args": ["--out", "{out}", "--version", "9.9.9"],
+      "min_chars": 40,
+      "expect_stdout_contains": [
+        "markitdown-9.9.9.zip",
+        "skill folder: markitdown/",
+        "markitdown/SKILL.md",
+        "markitdown/scripts/convert.py",
+        "markitdown/evals/fixtures/sample.zip",
+        "sha256:"
+      ],
+      "expect_not_contains": ["__pycache__", ".pyc", "markitdown/.git/"]
     }
   ]
 }
