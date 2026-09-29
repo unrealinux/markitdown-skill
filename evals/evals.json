@@ -374,7 +374,8 @@
         "def sanity_check",
         "collect_vendor",
         "--break-system-packages",
-        "force_utf8_stdout"
+        "force_utf8_stdout",
+        "def bundle_vc_runtime"
       ],
       "expect_not_contains": ["include_formatting"]
     },

@@ -4,7 +4,7 @@ description: "Use this skill whenever the user wants to read, extract, or conver
 license: MIT (see LICENSE; markitdown itself is MIT © Microsoft and is installed at runtime)
 compatibility: Requires Python 3.10+ and uv; the first run downloads markitdown from PyPI, so it needs network access (later runs use the uv cache).
 metadata:
-  version: 0.2.0
+  version: 0.2.1
   author: unrealinux
   homepage: https://github.com/unrealinux/markitdown-skill
 ---

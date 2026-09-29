@@ -223,6 +223,22 @@ markitdown\scripts\convert.py D:\文档 --output-dir D:\md --recursive
 - **音频转写、Azure DI / CU 仍然需要网络**——那是服务调用，不是安装问题。
 - **交付方式**：76 MiB 走 U 盘 / 内网共享 / 微信，不适合当邮件附件。
 - 构建时会裁掉 `pip`、`Scripts/`、Tcl/Tk、`sympy`+`mpmath`（共省 115 MiB），裁完自动跑自检（导入 onnxruntime + 转换 7 种格式的夹具），自检不过就中止构建。
+- **自带 VC++ 运行库**：`onnxruntime.dll` 按名字导入 `MSVCP140.dll` / `MSVCP140_1.dll` 且自己不带，缺 VC++ 2015-2022 可再发行包时 `MarkItDown()` 会在加载 magika 时失败。构建脚本会读所有二进制的导入表，把缺的运行库从本机 `System32` 拷进包内（python.exe 同目录 + onnxruntime 目录），拷完复验，还有缺的就中止构建。所以目标机**不需要装 VC++ 可再发行包**。
+
+## 支持哪些系统
+
+| 包 | 适用系统 | 前提 |
+|---|---|---|
+| `markitdown-<版本>-offline-<平台>.zip` | **只限构建时的平台 + 架构**，当前发布的是 **Windows x64**（x86_64 / AMD64） | 无——不需要 Python、不需要 uv、不需要 VC++ 可再发行包、运行时不联网 |
+| `markitdown-<版本>.zip` | Windows / macOS / Linux 均可 | 需要 Python 3.10+ 与 uv，首次转换需联网下载依赖 |
+
+判断目标机是不是 x64：命令行运行 `echo %PROCESSOR_ARCHITECTURE%`，输出 `AMD64` 就是；`ARM64` / `x86` 不适用，需要在对应平台上重新构建一次：
+
+```bash
+py scripts/build_offline_bundle.py --label offline-win-arm64   # 在 Windows ARM64 机器上跑
+```
+
+平台绑定的是解释器和编译型依赖（numpy / pandas / onnxruntime / lxml / Pillow / cryptography / pdfium），它们是各自平台的二进制轮子，不能跨平台搬运。
 
 ## 打包发布
 
