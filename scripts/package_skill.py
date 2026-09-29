@@ -98,18 +98,37 @@ def collect_files(root):
     return sorted(found)
 
 
-def build(root, out_path, folder, files):
-    """Write the zip and return its sha256."""
+def collect_vendor(vendor_dir):
+    """(source_path, arcname) pairs for a tree that ships as vendor/python/.
+
+    Used for the offline bundle: a standalone CPython plus markitdown that
+    convert.py picks up before it ever looks for uv. Thousands of files, so the
+    caller reports it as one summary line instead of listing every path.
+    """
+    entries = []
+    for dirpath, dirnames, filenames in os.walk(vendor_dir):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+        for name in sorted(filenames):
+            if os.path.splitext(name)[1].lower() in SKIP_EXTENSIONS:
+                continue
+            full = os.path.join(dirpath, name)
+            relative = os.path.relpath(full, vendor_dir).replace(os.sep, "/")
+            entries.append((full, f"vendor/python/{relative}"))
+    return entries
+
+
+def build(root, out_path, folder, entries):
+    """Write the zip (entries are `(source_path, archive_relative)` pairs)."""
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as archive:
-        for relative in files:
+        for source, relative in entries:
             info = zipfile.ZipInfo(f"{folder}/{relative}", date_time=FIXED_TIME)
             info.compress_type = zipfile.ZIP_DEFLATED
             # 0644 for files, and 0755 for the scripts so an unpacked copy can
             # run them directly on Unix.
-            executable = relative.endswith(".py") or relative.endswith(".sh")
+            executable = relative.endswith((".py", ".sh"))
             info.external_attr = (0o755 if executable else 0o644) << 16
-            with open(os.path.join(root, relative), "rb") as handle:
+            with open(source, "rb") as handle:
                 archive.writestr(info, handle.read())
 
     digest = hashlib.sha256()
@@ -142,6 +161,12 @@ def main():
     parser.add_argument("--version",
                         help="Version for the file name (default: metadata.version "
                              "from SKILL.md)")
+    parser.add_argument("--vendor", metavar="DIR",
+                        help="Ship DIR as vendor/python/ inside the archive "
+                             "(offline bundle: a standalone interpreter that "
+                             "already has markitdown installed)")
+    parser.add_argument("--label", default="",
+                        help="Extra suffix for the file name, e.g. offline-win64")
     args = parser.parse_args()
 
     frontmatter = read_frontmatter(os.path.join(SKILL_ROOT, "SKILL.md"))
@@ -150,16 +175,32 @@ def main():
         print("Error: SKILL.md has no `name:` in its frontmatter", file=sys.stderr)
         return 1
 
+    if args.vendor and not os.path.isdir(args.vendor):
+        print(f"Error: --vendor directory not found: {args.vendor}", file=sys.stderr)
+        return 1
+
     version = args.version or frontmatter.get("metadata.version") or "0.0.0"
     files = collect_files(SKILL_ROOT)
-    out_path = os.path.join(args.out, f"{folder}-{version}.zip")
-    digest = build(SKILL_ROOT, out_path, folder, files)
+    entries = [(os.path.join(SKILL_ROOT, relative), relative) for relative in files]
+
+    vendor_files = collect_vendor(args.vendor) if args.vendor else []
+    entries += vendor_files
+
+    stem = f"{folder}-{version}" + (f"-{args.label}" if args.label else "")
+    out_path = os.path.join(args.out, f"{stem}.zip")
+    digest = build(SKILL_ROOT, out_path, folder, entries)
 
     size = os.path.getsize(out_path)
     print(f"📦 {out_path}")
     print(f"   skill folder: {folder}/  (matches name: in SKILL.md)")
     print(f"   version: {version}")
     print(f"   files: {len(files)}   size: {size / 1024:.1f} KiB")
+    if vendor_files:
+        vendor_bytes = sum(os.path.getsize(source) for source, _ in vendor_files)
+        print(f"   vendor/python/: {len(vendor_files)} files, "
+              f"{vendor_bytes / 1024 / 1024:.1f} MiB uncompressed")
+        print("   → offline bundle: convert.py uses that interpreter and never "
+              "calls uv")
     print(f"   sha256: {digest}")
     if not any(f.startswith("evals/fixtures/") for f in files):
         print("⚠️  evals/fixtures/ is missing — run evals/make_fixtures.py before\n"
@@ -167,6 +208,9 @@ def main():
     print("\n   contents:")
     for relative in files:
         print(f"     {folder}/{relative}")
+    if vendor_files:
+        print(f"     {folder}/vendor/python/  ({len(vendor_files)} files, "
+              f"{vendor_bytes / 1024 / 1024:.1f} MiB)")
     return 0
 
 

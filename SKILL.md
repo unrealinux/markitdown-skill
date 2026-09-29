@@ -4,7 +4,7 @@ description: "Use this skill whenever the user wants to read, extract, or conver
 license: MIT (see LICENSE; markitdown itself is MIT © Microsoft and is installed at runtime)
 compatibility: Requires Python 3.10+ and uv; the first run downloads markitdown from PyPI, so it needs network access (later runs use the uv cache).
 metadata:
-  version: 0.1.2
+  version: 0.2.0
   author: unrealinux
   homepage: https://github.com/unrealinux/markitdown-skill
 ---
@@ -159,6 +159,11 @@ file. That delay is normal — do not kill the process and retry.
   the transcription extra converts to zero characters with exit code 0.
   Single-file mode says so on stderr; batch mode prints `⚠️ ... (0 chars ...)`
   and counts an `N empty` total instead of a clean `✅`.
+- **Offline bundle.** When the skill ships a `vendor/python/` interpreter, that
+  interpreter is used and uv is never called — no network is needed. `--extra` is
+  then ignored (the dependencies are baked in), and audio transcription or Azure
+  backends still need network because those are service calls, not installs.
+  `MARKITDOWN_PYTHON=/path/to/python` overrides which interpreter is used.
 
 ## Supported Formats
 
@@ -250,7 +255,7 @@ network. `sample.xlsx` and `sample.pptx` are generated through uv with
 readers exactly; if uv or the network is unavailable the two office evals are
 reported as SKIP rather than failed.
 
-Covers 29 evals: txt / csv / html / docx / pdf / xlsx / pptx text extraction
+Covers 32 evals: txt / csv / html / docx / pdf / xlsx / pptx text extraction
 (the xlsx fixture has two sheets, so a first-sheet-only regression fails); a
 `.zip` that must come back auto-unpacked under `## File:`; batch mode with nested
 directories (same-named files must not overwrite, hidden directories skipped,
@@ -264,8 +269,9 @@ asserted as empty output **with** the stderr warning and exit code 0; a footnote
 batch output (counts per bucket, plus the default `<input>_markdown` output
 directory); a `--style-map` run that must match the direct
 `MarkItDown(style_map=...)` output; the packaging script's archive manifest
-(single top-level `markitdown/` folder, no build junk); and four source-level
-guards that fail the run
+(single top-level `markitdown/` folder, no build junk, and the offline-bundle
+markers in convert.py, package_skill.py and build_offline_bundle.py); and four
+source-level guards that fail the run
 when the wrapper drops `--python 3.12`, loses URI/`--extra`/skip-report support,
 or when the docs reintroduce a parameter markitdown does not have or a format
 claim that contradicts 0.1.8.

@@ -347,6 +347,50 @@
         "sha256:"
       ],
       "expect_not_contains": ["__pycache__", ".pyc", "markitdown/.git/"]
+    },
+    {
+      "id": 30,
+      "prompt": "包装脚本必须支持离线包：优先用自带的解释器，不经过 uv",
+      "expected_output": "find_bundled_python 查 vendor/python 与 MARKITDOWN_PYTHON，snippet_command 直跑解释器，--list-plugins 有离线实现",
+      "files": ["scripts/convert.py"],
+      "mode": "source",
+      "expect_contains": [
+        "def find_bundled_python",
+        "MARKITDOWN_PYTHON",
+        "def snippet_command",
+        "PLUGINS_SNIPPET",
+        "offline bundle"
+      ],
+      "expect_not_contains": []
+    },
+    {
+      "id": 31,
+      "prompt": "离线构建脚本必须裁剪 + 自检，不能把没验证过的解释器打进包",
+      "expected_output": "build_offline_bundle.py 里有 TRIM 列表、sanity_check（导入 onnxruntime + 转 7 种夹具）、collect_vendor 打包，并且自己切 UTF-8 stdio",
+      "files": ["scripts/build_offline_bundle.py"],
+      "mode": "source",
+      "expect_contains": [
+        "TRIM = [",
+        "def sanity_check",
+        "collect_vendor",
+        "--break-system-packages",
+        "force_utf8_stdout"
+      ],
+      "expect_not_contains": ["include_formatting"]
+    },
+    {
+      "id": 32,
+      "prompt": "打包脚本必须支持把解释器目录塞进 zip（--vendor）",
+      "expected_output": "package_skill.py 有 collect_vendor 与 --vendor，固定落到 vendor/python/，且不逐个列出上千个文件",
+      "files": ["scripts/package_skill.py"],
+      "mode": "source",
+      "expect_contains": [
+        "def collect_vendor",
+        "--vendor",
+        "vendor/python/",
+        "def build"
+      ],
+      "expect_not_contains": []
     }
   ]
 }

@@ -141,6 +141,17 @@ SINGLE_SNIPPET = (
     "sys.stdout.write(getattr(result, 'text_content', '') or '')\n"
 )
 
+PLUGINS_SNIPPET = (
+    "from importlib.metadata import entry_points\n"
+    "points = list(entry_points(group='markitdown.plugin'))\n"
+    "print('Installed MarkItDown 3rd-party Plugins:\\n')\n"
+    "if not points:\n"
+    "    print('  * No 3rd-party plugins installed.')\n"
+    "else:\n"
+    "    for point in points:\n"
+    "        print(f'  * {point.name:<16}\\t(package: {point.value})')\n"
+)
+
 EMPTY_OUTPUT_WARNING = (
     "⚠️  Empty output: no extractable text. A scanned PDF or an image has no "
     "text layer (markitdown ships no OCR engine); audio needs --extra "
@@ -178,6 +189,27 @@ def child_env():
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     return env
+
+
+def find_bundled_python():
+    """The interpreter shipped inside the skill, for machines without uv.
+
+    scripts/build_offline_bundle.py packs a standalone Python plus markitdown
+    into vendor/python/ so the skill works on a host with no network, no Python
+    and no uv. MARKITDOWN_PYTHON overrides it, which also covers "markitdown is
+    already installed in some interpreter I manage myself".
+    """
+    override = os.environ.get("MARKITDOWN_PYTHON")
+    if override:
+        return override
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for relative in (("vendor", "python", "python.exe"),
+                     ("vendor", "python", "python3"),
+                     ("vendor", "python", "bin", "python3")):
+        candidate = os.path.join(root, *relative)
+        if os.path.exists(candidate):
+            return candidate
+    return None
 
 
 def find_uv():
@@ -238,6 +270,18 @@ def cli_command(uv_path, spec):
         "--python", PYTHON_REQUEST,
         "markitdown",
     ]
+
+
+def snippet_command(interpreter, uv_path, spec, snippet):
+    """Build the command that runs a snippet in the child interpreter.
+
+    With a bundled interpreter this is a plain `python -c`: no uv, no package
+    resolution, no network. Otherwise uv creates a throwaway environment that
+    has markitdown plus the requested extras.
+    """
+    if interpreter:
+        return [interpreter, "-c", snippet]
+    return uv_command(uv_path, spec, snippet)
 
 
 def is_uri(value):
@@ -361,21 +405,23 @@ def emit_text(args, text):
     return text
 
 
-def convert_one(args, uv_path, spec):
+def convert_one(args, interpreter, uv_path, spec):
     """Convert a single file, URL or stdin stream.
 
     Returns the Markdown text on success, None on failure. markitdown's CLI does
-    the work unless a constructor kwarg it cannot express was requested
-    (`--style-map`), in which case the snippet path runs instead.
+    the work when uv is available; a bundled interpreter (offline bundle) and
+    constructor kwargs the CLI cannot express (`--style-map`) both go through
+    the snippet path instead.
     """
     source = args.input
     print(f"📄 Converting: {'stdin' if source == '-' else source}", file=sys.stderr)
 
-    if args.style_map:
+    if interpreter or args.style_map:
         ctor, convert_kwargs, stream_info = batch_options(args)
         options = json.dumps({"ctor": ctor, "convert": convert_kwargs,
                               "stream_info": stream_info})
-        cmd = uv_command(uv_path, spec, SINGLE_SNIPPET) + [source, options]
+        cmd = snippet_command(interpreter, uv_path, spec, SINGLE_SNIPPET)
+        cmd += [source, options]
     else:
         cmd = cli_command(uv_path, spec) + cli_args(args)
         if source != "-":
@@ -435,7 +481,7 @@ def collect_files(input_dir, recursive):
     return found, skipped
 
 
-def run_batch_jobs(jobs, uv_path, spec, options):
+def run_batch_jobs(jobs, interpreter, uv_path, spec, options):
     """Convert every job in one interpreter. Returns one record per job."""
     manifest = tempfile.NamedTemporaryFile(
         "w", suffix=".json", delete=False, encoding="utf-8", prefix="markitdown-jobs-"
@@ -444,7 +490,7 @@ def run_batch_jobs(jobs, uv_path, spec, options):
         json.dump({"jobs": jobs, "options": options}, manifest, ensure_ascii=False)
         manifest.close()
 
-        cmd = uv_command(uv_path, spec, BATCH_SNIPPET) + [manifest.name]
+        cmd = snippet_command(interpreter, uv_path, spec, BATCH_SNIPPET) + [manifest.name]
         print(f"🚀 Converting {len(jobs)} files in one interpreter...", file=sys.stderr)
         try:
             result = subprocess.run(
@@ -524,7 +570,7 @@ def report_skipped(skipped):
             print(f"   ... and {len(paths) - 5} more", file=sys.stderr)
 
 
-def convert_batch(args, uv_path, spec):
+def convert_batch(args, interpreter, uv_path, spec):
     """Convert every supported file, mirroring the input tree into output_dir."""
     input_dir = args.input
     output_dir = args.output_dir or default_output_dir(input_dir)
@@ -547,7 +593,7 @@ def convert_batch(args, uv_path, spec):
     disambiguate_outputs(jobs)
     ctor, convert_kwargs, stream_info = batch_options(args)
     options = {"ctor": ctor, "convert": convert_kwargs, "stream_info": stream_info}
-    results = run_batch_jobs(jobs, uv_path, spec, options)
+    results = run_batch_jobs(jobs, interpreter, uv_path, spec, options)
 
     converted = 0
     empty = []
@@ -690,21 +736,42 @@ def main():
         print(f"Error: {problem}", file=sys.stderr)
         sys.exit(1)
 
-    uv_path = find_uv()
-    if not uv_path:
-        print("Error: uv not found. Install it first:", file=sys.stderr)
-        print("  curl -LsSf https://astral.sh/uv/install.sh | sh", file=sys.stderr)
-        print("  Windows: uv lives under %APPDATA%\\Python\\Python3xx\\Scripts\\uv.exe",
-              file=sys.stderr)
-        sys.exit(1)
-
     spec = with_spec(args.extra)
 
+    # A bundled interpreter means this is the offline bundle: everything the
+    # conversion needs is already on disk, so uv is neither needed nor usable.
+    interpreter = find_bundled_python()
+    uv_path = None
+    if interpreter:
+        print(f"🔌 Offline bundle interpreter: {interpreter}", file=sys.stderr)
+        if args.extra:
+            print("⚠️  --extra is ignored: the offline bundle already contains the "
+                  "dependencies it was built with.", file=sys.stderr)
+    else:
+        uv_path = find_uv()
+        if not uv_path:
+            print("Error: uv not found. Install it first:", file=sys.stderr)
+            print("  curl -LsSf https://astral.sh/uv/install.sh | sh", file=sys.stderr)
+            print("  Windows: uv lives under "
+                  "%APPDATA%\\Python\\Python3xx\\Scripts\\uv.exe", file=sys.stderr)
+            print("  No network and no uv? Use the offline bundle, or point "
+                  "MARKITDOWN_PYTHON at an interpreter that already has markitdown "
+                  "installed.", file=sys.stderr)
+            sys.exit(1)
+
     if args.list_plugins:
-        # markitdown prints the plugin list itself; forward its exit code.
-        result = subprocess.run(
-            cli_command(uv_path, spec) + ["--list-plugins"], env=child_env()
-        )
+        if interpreter:
+            # The bundled interpreter has no markitdown CLI, so list the entry
+            # points directly rather than shelling out to `markitdown`.
+            result = subprocess.run(
+                snippet_command(interpreter, None, spec, PLUGINS_SNIPPET),
+                env=child_env(),
+            )
+        else:
+            # markitdown prints the plugin list itself; forward its exit code.
+            result = subprocess.run(
+                cli_command(uv_path, spec) + ["--list-plugins"], env=child_env()
+            )
         sys.exit(result.returncode)
 
     is_stdin = args.input == "-"
@@ -720,7 +787,7 @@ def main():
             print("Error: -o applies to single files; use --output-dir for directories",
                   file=sys.stderr)
             sys.exit(1)
-        sys.exit(convert_batch(args, uv_path, spec))
+        sys.exit(convert_batch(args, interpreter, uv_path, spec))
 
     if args.output_dir:
         print("Error: --output-dir applies to directories", file=sys.stderr)
@@ -740,7 +807,7 @@ def main():
         print("Note: reading stdin; pass -x/--extension (e.g. -x pdf) if the "
               "format cannot be sniffed.", file=sys.stderr)
 
-    text = convert_one(args, uv_path, spec)
+    text = convert_one(args, interpreter, uv_path, spec)
     sys.exit(0 if text is not None else 1)
 
 

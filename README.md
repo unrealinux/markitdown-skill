@@ -61,6 +61,7 @@ python3 $SKILL/scripts/convert.py ./文档 --output-dir ./md --recursive
 - 🔗 URL 输入（http/https/file/data）与 stdin
 - 📦 批量文件夹转换（保留子目录结构，`--json` 输出机器可读汇总）
 - ☁️ `--extra` 一键解锁 Azure Document Intelligence / Content Understanding / 插件后端
+- 📴 可选**离线包**：自带 Python + markitdown，适合无外网、没装 Python、没有 uv 的机器
 
 ## 运行环境
 
@@ -169,7 +170,7 @@ python3 $SKILL/scripts/convert.py invoice.txt
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| `uv not found` | uv 没装或不在 PATH | 装 uv；Windows 通常在 `%APPDATA%\Python\Python3xx\Scripts\uv.exe` |
+| `uv not found` | uv 没装或不在 PATH | 装 uv；Windows 通常在 `%APPDATA%\Python\Python3xx\Scripts\uv.exe`；**无外网就用离线包**，或把 `MARKITDOWN_PYTHON` 指向一个已装 markitdown 的解释器 |
 | `MissingDependencyException` | 该格式的 extra 没装 | 默认已含 `docx,xls,xlsx,pptx,pdf`；`.msg` / 音频等要加 `--extra` |
 | `UnsupportedFormatException` | markitdown 读不了这个格式 | `.doc` / `.ppt` 先另存；其它格式先转 PDF 或 `.docx` |
 | PDF / 图片输出为空 | 没有文字层，或无 OCR | 先 `tesseract` OCR，或用 `--extra az-doc-intel` |
@@ -188,15 +189,47 @@ python3 evals/make_fixtures.py && python3 evals/run_evals.py
 
 夹具中的 txt/csv/html/docx/pdf/png 与目录树由标准库生成，不需要联网；`sample.xlsx` / `sample.pptx` 通过 uv + `openpyxl` + `python-pptx` 生成（手写 OOXML 很难同时满足这两个读取器），拿不到网络时这两条评测显示为 SKIP 而不是失败。发行包内已带夹具，所以解压后直接跑 `run_evals.py` 即可，全程离线。
 
-共 29 条评测，覆盖文本提取（txt/csv/html/docx/pdf/xlsx/pptx，其中 xlsx 夹具含两个工作表）、zip 自动解包、docx 脚注的真实渲染（`[[1]](#footnote-1)` 而不是 `[^1]`）、批量目录结构（含同名不同后缀不互相覆盖、跳过文件带原因上报）、坏文件与好文件混在一起时的退出码与报错、`-o` 落盘、`--json` 汇总、URL（`data:`）与 stdin 输入、`--help` 能力面、`--style-map` 与直接 `MarkItDown(style_map=...)` 结果一致、默认输出目录 `<input>_markdown`、打包脚本的 zip 清单（顶层只有 `markitdown/`、不含构建垃圾）、「markitdown 不能 OCR」这条已知限制（图片和音频都断言空输出 + stderr 警告 + 退出码 0），以及四条源码级守卫：包装脚本必须固定 `--python 3.12`、保留 URI/`--extra`/跳过上报，文档不得出现 markitdown 里不存在的参数名、与 0.1.8 实际行为矛盾的格式说明，或把 .doc/.ppt 当成走 LibreOffice。
+共 32 条评测，覆盖文本提取（txt/csv/html/docx/pdf/xlsx/pptx，其中 xlsx 夹具含两个工作表）、zip 自动解包、docx 脚注的真实渲染（`[[1]](#footnote-1)` 而不是 `[^1]`）、批量目录结构（含同名不同后缀不互相覆盖、跳过文件带原因上报）、坏文件与好文件混在一起时的退出码与报错、`-o` 落盘、`--json` 汇总、URL（`data:`）与 stdin 输入、`--help` 能力面、`--style-map` 与直接 `MarkItDown(style_map=...)` 结果一致、默认输出目录 `<input>_markdown`、打包脚本的 zip 清单（顶层只有 `markitdown/`、不含构建垃圾）、离线包支持（优先用 `vendor/python`、`--extra` 被忽略、构建脚本裁剪+自检）、「markitdown 不能 OCR」这条已知限制（图片和音频都断言空输出 + stderr 警告 + 退出码 0），以及四条源码级守卫：包装脚本必须固定 `--python 3.12`、保留 URI/`--extra`/跳过上报，文档不得出现 markitdown 里不存在的参数名、与 0.1.8 实际行为矛盾的格式说明，或把 .doc/.ppt 当成走 LibreOffice。
 
 批量模式在**同一个解释器**里转完所有文件（`import markitdown` 本身要 5 秒）。实测：4 个文件 21.9s → 6.0s，101 个文件约 9 秒。单文件模式绕不开这 5 秒，等 6-9 秒是正常的，不要当成卡死。
+
+## 离线安装包（无外网 / 无 Python / 无 uv）
+
+面向完全隔离的机器（内网、没装 Python、没有 uv）。包里自带一个独立 CPython 和已经装好的 markitdown，目标机解压就能跑。
+
+在自己这台能联网的机器上构建：
+
+```bash
+py scripts/build_offline_bundle.py                                  # 首次：下载解释器和依赖
+py scripts/build_offline_bundle.py --keep-python --skip-install      # 之后复用，只重新打包
+py scripts/build_offline_bundle.py --extras docx,xls,xlsx,pptx,pdf   # 自定义烘进去的 extras
+```
+
+产物 `dist/markitdown-<版本>-offline-<平台>.zip`，实测 **76.3 MiB**（Python 3.12.14 + `markitdown[docx,xls,xlsx,pptx,pdf]`，压缩前 204 MiB）。
+
+目标机器上：解压到任意位置，直接跑——不装任何东西、不联网。
+
+```bat
+markitdown\scripts\convert.py 你的文档.pdf
+markitdown\scripts\convert.py D:\文档 --output-dir D:\md --recursive
+```
+
+原理：`convert.py` 启动时先找 `vendor/python/`（也可以用环境变量 `MARKITDOWN_PYTHON` 指定别的解释器），找到就直接用它跑，**完全跳过 uv 和网络**，并会在 stderr 打一行 `🔌 Offline bundle interpreter:` 让你确认走的是哪条路径。
+
+**限制**
+
+- **平台绑定**：解释器和编译型依赖（numpy/pandas/onnxruntime/lxml）只对构建时的平台+架构有效。要 Windows ARM64 或 Linux，就在对应平台上各构建一次。
+- **`--extra` 在离线包里无效**：依赖是烘进去的，加了只打一条警告然后忽略。要别的后端就在构建时用 `--extras` 加。
+- **音频转写、Azure DI / CU 仍然需要网络**——那是服务调用，不是安装问题。
+- **交付方式**：76 MiB 走 U 盘 / 内网共享 / 微信，不适合当邮件附件。
+- 构建时会裁掉 `pip`、`Scripts/`、Tcl/Tk、`sympy`+`mpmath`（共省 115 MiB），裁完自动跑自检（导入 onnxruntime + 转换 7 种格式的夹具），自检不过就中止构建。
 
 ## 打包发布
 
 ```bash
 py scripts/package_skill.py                        # dist/markitdown-<版本>.zip
 py scripts/package_skill.py --version 1.0.0 --out /tmp
+py scripts/package_skill.py --vendor <解释器目录> --label offline-win-x64   # 打离线包
 ```
 
 产物是**一个顶层目录** `markitdown/`，里面是 `SKILL.md`、`README.md`、`LICENSE`、`scripts/`、`references/`、`evals/`。
@@ -228,13 +261,16 @@ markitdown/
 ├── LICENSE                   # MIT（markitdown 本体为 MIT © Microsoft，运行时安装）
 ├── scripts/
 │   ├── convert.py            # 转换脚本
-│   └── package_skill.py      # 打包成可分发的 zip
+│   ├── package_skill.py      # 打包成可分发的 zip
+│   └── build_offline_bundle.py  # 构建离线包（自带解释器，无外网可用）
 ├── references/
 │   └── formats.md            # 各格式细节（英文）
-└── evals/
-    ├── evals.json            # 测试用例定义
-    ├── make_fixtures.py      # 生成夹具（fixtures/ 不入库）
-    └── run_evals.py          # 执行评测
+├── evals/
+│   ├── evals.json            # 测试用例定义
+│   ├── make_fixtures.py      # 生成夹具（fixtures/ 不入库）
+│   └── run_evals.py          # 执行评测
+└── vendor/                   # 可选，只在离线包里出现
+    └── python/               # 独立 CPython + 已装好的 markitdown
 ```
 
 ## 关于语言
